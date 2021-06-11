@@ -6,3 +6,11 @@
 *.db
 *.DS_Store
 *.ipynb_checkpoints
+
+# CUDA .gitignore
+*.i
+*.ii
+*.gpu
+*.ptx
+*.cubin
+*.fatbin
