@@ -31,6 +31,18 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 class Data_Prepare():
+    """Applies robust scaler and KNN imputer to genomic features. 
+    Checks for highly correlated features (Spearman correlation) and features not 
+    correlated to the output (Point Biserial correlation or/and Logistic regression AUPRC).
+    Splits dataset either for hyperparameters tuning or model testing.
+
+    Parameters
+    ---------------
+    data_dict (dict): dictionary of cell lines (pd.DataFrame).
+    labels_dict (dict): dictionary of cell lines labels (pd.Series).
+    n_neighbours: number of neighbours for KNN imputer.
+        Default: 5
+    """
     
     def __init__(self, data_dict, labels_dict, n_neighbors=5):
         
@@ -62,6 +74,7 @@ class Data_Prepare():
     
                     
     def scale_data_genfeatures(self):
+        """Applies robust scaler to numeric genomic features by row/column?"""
         for key in self.data_dict.keys():
             if key != 'fa':
                 self.data_dict[key] = pd.DataFrame(self.robust_scaler.fit_transform(self.data_dict[key].values),
@@ -70,6 +83,7 @@ class Data_Prepare():
                 
     
     def knn_imputation_genfeatures(self):
+        """Applies KNN imputation to numeric genomic features."""
         for key in self.data_dict.keys():
             if key != 'fa':
                 self.data_dict[key] = pd.DataFrame(self.knn_imputer.fit_transform(self.data_dict[key].values),
@@ -87,7 +101,19 @@ class Data_Prepare():
     def point_biserial_corr(self, X, y, verbose=False):
         """Point biserial correlation returns the correlation between a continuous and
         binary variable (target). It is a parametric test, so it assumes the data to be normally
-        distributed."""
+        distributed.
+        
+        Parameters
+        ----------------
+        X (pd.DataFrame): data.
+        y (pd.Series): label.
+        verbose (bool): returns scores.
+            Default: False
+
+        Returns
+        ------------
+        Set of columns uncorrelated with the target.
+        """
         
         uncorrelated = set()
 
@@ -105,7 +131,20 @@ class Data_Prepare():
     def logistic_regression_corr(self, X, y, verbose=False):
         """The Logistic regression can be used to assess if a continuous variable has any 
          effect on the target. It doesn't assume anything about the distribution of the variables.
-         The metric used is the area under the precision recall curve, which """
+         The metric used is the area under the precision recall curve, which is compared to the 
+         baseline (when the model guesses at random the target.
+
+        Parameters
+        ----------------
+        X (pd.DataFrame): data.
+        y (pd.Series): label.
+        verbose (bool): returns scores.
+            Default: False
+
+        Returns
+        ----------------
+        Set of columns uncorrelated with the target (AUPRC = baseline).
+        """
         
         uncorrelated = set()
         
@@ -130,8 +169,17 @@ class Data_Prepare():
         
         return uncorrelated
 
+
     
     def correlation_with_label(self, type_corr='all', verbose=False):
+        """Checks correlation with label.
+
+        Parameters
+        ----------------
+        type_corr (str): type of correlation. Values are ['point_biserial_corr', 'logistic_regression', 'all']
+            Default: 'all'
+        verbose (bool): returns info.
+        """
         
         if type_corr not in ['point_biserial_corr', 'logistic_regression', 'all']:
             raise ValueError(
@@ -175,7 +223,18 @@ class Data_Prepare():
     
     def spearman_corr(self, X, verbose=False):
         """Spearman correlation checks for linear correlation between continuous features.
-        It is non-parametric, so normality of the variables is not necessary."""
+        It is non-parametric, so normality of the variables is not necessary.
+
+        Parameters
+        ----------------
+        X (pd.DataFrame): data.
+        verbose (bool): returns scores.
+            Default: False
+
+        Returns
+        ----------------
+        Set of pairs of highly correlated features (>0.85).
+        """
         
         correlated = set()
         
@@ -188,40 +247,60 @@ class Data_Prepare():
                 if verbose:
                     print('correlated columns: {} - {}, Spearman Correlation {}'.format(col1, col2, round(corr,4)))
         
+        # NB: ORDINA PER CORRELAZIONE decrescente
         return correlated
     
     
     
 
     def remove_correlated_feature(self, X, y, correlated_pairs, verbose=False):
+        """Removes the less correlated feature with the target from a pair of highly correlated feature.
+        Correlation with the target is calculated as the AUPRC of a logistic regression between
+        the feature and the target.
+
+        Parameters
+        ----------------
+        X (pd.DataFrame): data.
+        y (pd.Series): label
+        correlated_pairs (set/list): list of pairs of correlated features
+        verbose (bool): returns scores.
+            Default: False
+
+        Returns
+        ----------------
+        Set of features to remove.
+        """
 
         correlated_to_remove = set()
 
         for pair in correlated_pairs:
-            col1, col2 = pair
-            x1 = X[col1].values.reshape(-1, 1)
-            x2 = X[col2].values.reshape(-1, 1)
+            if len(pair) >1:
+                col1, col2 = pair
+                x1 = X[col1].values.reshape(-1, 1)
+                x2 = X[col2].values.reshape(-1, 1)
 
-            # perform 3-folds cv with logistic regression
-            cv = KFold(n_splits=3, random_state=123, shuffle=True)
-            model = LogisticRegression()
+                # perform 3-folds cv with logistic regression
+                cv = KFold(n_splits=3, random_state=123, shuffle=True)
+                model = LogisticRegression()
 
-            # compute the AUPRC for the positive score
-            AUPRC = make_scorer(average_precision_score, average='weighted')
-            scores1 = cross_val_score(model, x1, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
-            scores2 = cross_val_score(model, x1, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
+                # compute the AUPRC for the positive score
+                AUPRC = make_scorer(average_precision_score, average='weighted')
+                scores1 = cross_val_score(model, x1, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
+                scores2 = cross_val_score(model, x1, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
 
-            if verbose:
-                print('columns to compare: {} vs {}, AUPRC: {} vs {}'.format(col1, col2, scores1.mean(), scores2.mean()))
+                if verbose:
+                    print('columns to compare: {} vs {}, AUPRC: {} vs {}'.format(col1, col2, scores1.mean(), scores2.mean()))
 
-            if scores1.mean() >= scores2.mean():
-                correlated_to_remove.add(col2)
-            else:
-                correlated_to_remove.add(col1)
+                if scores1.mean() >= scores2.mean():
+                    correlated_to_remove.add(col2)
+                else:
+                    correlated_to_remove.add(col1)
     
     
     
     def correlation_btw_features(self, verbose=False):
+        """Runs Spearman correlation and remove less correlated feature from a pair
+        of correlated features."""
         
         self.to_drop = dict()
         
@@ -236,7 +315,24 @@ class Data_Prepare():
                         self.data_dict[key] = self.data_dict[key].drop(list(self.to_drop[key]), axis=1)
          
     
-    def split_data(self, cell_line, test_size, validation_size):
+    def split_data(self, cell_line, hyper_tuning, sequence, test_size, validation_size):
+        """Splits data into training and test set for model testing. Splits further the training
+        set and discard the test set if used for hyperparameters tuning.
+
+        Parameters
+        --------------
+        cell_line (str): name of the cell line. Possible values are ['A549','GM12878', 'H1', 'HEK293', 'HEPG2', 'K562', 'MCF7']
+        hyper_tuning (bool): if True, creates a training and validation set
+            and discards test set.
+            Default: False
+        sequence (bool): if the data passed are the genomic sequence.
+        test_size (float): size of test set
+        validation_size (float): size of validation set
+
+        Returns
+        ---------------
+        Training set, Test set, training labels, test labels
+        """
         
         if self.sequence:
             # if the task is active_E_vs_active_P or inactive_E_vs_inactive_P we need to select
@@ -254,7 +350,7 @@ class Data_Prepare():
                                                                                  test_size=test_size, 
                                                                                  random_state=456, shuffle=True) 
 
-            if self.hyper_tuning:
+            if hyper_tuning:
                 assert (self.X_train.shape[0] ==  len(self.y_train))
                     
                 self.X_train, self.X_test,  self.y_train, self.y_test = train_test_split(self.X_train, 
@@ -271,7 +367,7 @@ class Data_Prepare():
                                                                                     test_size=test_size, 
                                                                                     random_state=123, shuffle=True) 
             
-            if self.hyper_tuning: 
+            if hyper_tuning: 
                 assert (self.X_train.shape[0] ==  len(self.y_train))
 
                 self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X_train, 
@@ -280,17 +376,34 @@ class Data_Prepare():
                                                                                         random_state=456, shuffle=True) 
         
     
-    def return_data(self, cell_line, hyper_tuning=False, sequence=True, test_size=0.25, validation_size=0.15):
-    
-        self.sequence=sequence
-        self.hyper_tuning=hyper_tuning
+    def return_data(self, cell_line, hyper_tuning=False, sequence=False, test_size=0.25, validation_size=0.15):
+        """Splits data into training and test set for model testing. Splits further the training
+        set and discard the test set if used for hyperparameters tuning.
+
+        Parameters
+        --------------
+        cell_line (str): name of the cell line. Possible values are ['A549','GM12878', 'H1', 'HEK293', 'HEPG2', 'K562', 'MCF7']
+        hyper_tuning (bool): if True, creates a training and validation set
+            and discards test set.
+            Default: False
+        sequence (bool): if the data passed are the genomic sequence.
+            Default: False
+        test_size (float): size of test set
+            Default: 0.25
+        validation_size (float): size of validation set
+            Default: 0.15
+
+        Returns
+        ---------------
+        Dataframes of Training set, Test set, training labels, test labels, index (info about sequence)
+        """
         
         if cell_line not in ['A549','GM12878', 'H1', 'HEK293', 'HEPG2', 'K562', 'MCF7']:
             raise ValueError(
             "Argument 'cell_line' has an incorrect value: use 'A549', 'GM12878', 'H1', 'HEK293', 'HEPG2', 'K562', 'MCF7'")
             
         
-        self.split_data(cell_line=cell_line, test_size=test_size, validation_size=validation_size)
+        self.split_data(cell_line=cell_line, hyper_tuning=hyper_tuning, test_size=test_size, validation_size=validation_size)
     
 
         return ( self.X_train.reset_index(drop=True), self.X_test.reset_index(drop=True), 
@@ -301,7 +414,15 @@ class Data_Prepare():
 
 
 class Dataset_Wrap(Dataset):
-    def __init__(self, X, y, n_neighbors, sequence=False):
+    """Builds a Dataset object and saves indexes of positive and negative labels.
+    If the data are the genomic sequence, transforms labels in integer and applies KNN imputer.
+
+    Attributes:
+    ---------------
+    pos_index: indexes of positive labels.
+    neg_index: indexes of negative labels.
+    """
+    def __init__(self, X, y, n_neighbors=5, sequence=False):
         super(Dataset_Wrap, self).__init__()
         
         self.X = X
@@ -316,7 +437,6 @@ class Dataset_Wrap(Dataset):
         #matrices of different dimensions which cannot be concatenated
         self.label_encoder = LabelEncoder().fit(np.array(['a','c','g','n','t']))
         # get rid of value 3 which is 'n' (nan)
-        self.onehot_encoder = OneHotEncoder(sparse=False).fit(np.array([0,1,2,4]).reshape(-1, 1)) 
         self.knn_imputer = KNNImputer(n_neighbors=self.n_neighbors)
 
 
@@ -349,6 +469,9 @@ class Dataset_Wrap(Dataset):
 
 
 class BalancePos_BatchSampler(Sampler):
+    """Sampler that evenly distributes positive observations among
+    all batches.
+    """
     def __init__(self, dataset, batch_size):
         
         self.pos_index = dataset.pos_index
@@ -382,13 +505,33 @@ class BalancePos_BatchSampler(Sampler):
         return self.n_batches
 
 
-import pickle
-from varname import nameof
-
-
 
 
 class Build_DataLoader_Pipeline():
+    """Preprocesses data and builds a dataloader object.
+
+    Applies robust scaler to genomic features and one hot encoding to genomic sequence.
+    Applies KNN imputer.
+    Removes correlated features and features uncorrelated with the target.
+    Saves the object containing Data_Prepare class with preprocessed data.
+    Splits dataset in training and test set. If the usage is for hyperparameters tuning, 
+    splits the training set further and discard the test set and returns data of the selected 
+    cell line.
+    Creates dataloader object with evenly distributed positive targets in all the batches.
+
+    Parameters
+    ------------------
+    data_dict (dict): dictionary of cell lines (pd.DataFrame).
+    labels_dict (dict): dictionary of cell lines labels (pd.Series).
+    path_name (str): name of pickle file storing the Data_Prepare class 
+    containing preprocessed data.
+    n_neighbours: number of neighbours for KNN imputer.
+        Default: 5
+    type_corr (str): type of correlation. Values are ['point_biserial_corr', 'logistic_regression', 'all']
+        Default: 'all'
+    verbose (bool): returns info.
+        Default: False
+    """
 
     def __init__(self,
                  data_dict, 
@@ -441,7 +584,25 @@ class Build_DataLoader_Pipeline():
                     test_size=0.25, 
                     validation_size=0.15,
                     batch_size = 100):
-            
+        """
+        Builds DataLoader object.
+
+        Parameters
+        --------------
+        cell_line (str): name of the cell line. Possible values are ['A549','GM12878', 'H1', 'HEK293', 'HEPG2', 'K562', 'MCF7']
+        hyper_tuning (bool): if True, creates a training and validation set
+            and discards test set.
+            Default: False
+        sequence (bool): if the data passed are the genomic sequence.
+        test_size (float): size of test set
+        validation_size (float): size of validation set
+
+        Returns
+        ---------------
+        DataLoader of training set, DataLoader of test set
+
+        """
+
         # retrieve the data 
         X_train, X_test, y_train, y_test, index = self.data_class.return_data(cell_line=cell_line, 
                                                                           hyper_tuning=hyper_tuning, 
