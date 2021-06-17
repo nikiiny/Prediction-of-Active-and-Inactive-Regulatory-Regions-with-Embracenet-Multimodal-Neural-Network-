@@ -13,20 +13,14 @@ import random
 import torch
 import torch.nn.functional as F
 import pickle
-import pandas as pd
-import numpy as np
 from sklearn.model_selection import train_test_split
 import re
-import itertools
-from scipy.stats import pointbiserialr
-from sklearn.model_selection import KFold
-from sklearn.model_selection import cross_val_score
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import make_scorer
-from sklearn.metrics import average_precision_score
-from scipy.stats import spearmanr
 from torch.utils.data import Sampler
 from collections import OrderedDict
+from collections import defaultdict
+
+from .utils import point_biserial_corr, logistic_regression_corr, kruskal_wallis_corr, wilcoxon_corr, spearman_corr, remove_correlated_features
+
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -43,9 +37,29 @@ class Data_Prepare():
     labels_dict (dict): dictionary of cell lines labels (pd.Series).
     n_neighbours: number of neighbours for KNN imputer.
         Default: 5
+    pb_corr_threshold: point-biserial correlation threshold for correlation
+        between X and y.
+        Default: 0.05
+    kruskal_pval_threshold: kruskal-wallis p-value threshold for correlation
+        between X and y.
+        Default: 0.05
+    wilcoxon_pval_threshold: wilcoxon signed-rank p-value threshold for
+        correlation between X and y.
+        Default: 0.05
+    spearman_corr_threshold: Spearman correlation threshold for correlation
+        between different features.
+        Default: 0.85
     """
     
-    def __init__(self, data_dict, labels_dict, n_neighbors=5):
+    def __init__(self, 
+                 data_dict, 
+                 labels_dict, 
+                 n_neighbors=5,
+                 pb_corr_threshold=0.05,
+                 kruskal_pval_threshold = 0.05,
+                 wilcoxon_pval_threshold = 0.05,
+                 spearman_corr_threshold=0.85
+                ):
         
         self.labels_dict = labels_dict.copy()
         self.index = data_dict['H1'][['chrom','chromStart','chromEnd','strand']].copy()
@@ -60,6 +74,10 @@ class Data_Prepare():
                 
         
         self.n_neighbors = n_neighbors
+        self.pb_corr_threshold = pb_corr_threshold
+        self.kruskal_pval_threshold = kruskal_pval_threshold
+        self.wilcoxon_pval_threshold = wilcoxon_pval_threshold
+        self.spearman_corr_threshold = spearman_corr_threshold
         
         self.robust_scaler = RobustScaler()
         self.knn_imputer = KNNImputer(n_neighbors=self.n_neighbors)
@@ -71,7 +89,7 @@ class Data_Prepare():
         
         self.sequence = []
         
-        self.to_drop = dict()
+        self.to_drop = defaultdict(lambda: set())
     
                     
     def scale_data_genfeatures(self):
@@ -97,209 +115,114 @@ class Data_Prepare():
         self.scale_data_genfeatures()
         self.knn_imputation_genfeatures()
         
-  
+    
+    
+    
+    def correlation_with_label(self, type_corr, intersection=False, verbose=False):
+        """Checks correlation of features with label and deletes uncorrelated columns.
 
-    def point_biserial_corr(self, X, y, verbose=False):
-        """Point biserial correlation returns the correlation between a continuous and
-        binary variable (target). It is a parametric test, so it assumes the data to be normally
-        distributed.
-        
         Parameters
         ----------------
-        X (pd.DataFrame): data.
-        y (pd.Series): label.
-        verbose (bool): returns scores.
+        type_corr (str or list of str): type of correlation. Values are ['point_biserial_corr', 
+        'logistic_regression', 'kruskal_wallis_corr', 'wilcoxon_corr'].
+        intersection (bool): whether to remove the uncorrelated features selected by all the methods (intersection)
+            or the uncorrelated features selected by at least one method (union).
             Default: False
-
-        Returns
-        ------------
-        Set of columns uncorrelated with the target.
-        """
-        
-        uncorrelated = set()
-
-        for col in X.columns:
-            x = X[col]
-            corr,_ = pointbiserialr(x,y)
-            if abs(corr) < 0.05:
-                uncorrelated.add(col)
-                if verbose:
-                    print('column: {}, Point-biserial Correlation: {}'.format(col, round(corr,4)))
-        
-        return uncorrelated
-    
-    
-    def logistic_regression_corr(self, X, y, verbose=False):
-        """The Logistic regression can be used to assess if a continuous variable has any 
-         effect on the target. It doesn't assume anything about the distribution of the variables.
-         The metric used is the area under the precision recall curve, which is compared to the 
-         baseline (when the model guesses at random the target.
-
-        Parameters
-        ----------------
-        X (pd.DataFrame): data.
-        y (pd.Series): label.
-        verbose (bool): returns scores.
-            Default: False
-
-        Returns
-        ----------------
-        Set of columns uncorrelated with the target (AUPRC = baseline).
-        """
-        
-        uncorrelated = set()
-        
-        for col in X.columns:
-            x = X[col].values.reshape(-1, 1)
-
-            # perform 3-folds cv with logistic regression
-            cv = KFold(n_splits=3, random_state=123, shuffle=True)
-            model = LogisticRegression()
-
-            baseline_binary_pos = len(y[y==1]) / len(y)
-
-            # compute the AUPRC for the positive score
-            AUPRC = make_scorer(average_precision_score, average='weighted')
-            scores = cross_val_score(model, x, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
-        
-            if scores.mean() <= baseline_binary_pos:
-                uncorrelated.add(col)
-                
-                if verbose:
-                    print('column: {}, AUPRC: {}, Baseline positive class: {}'.format(col, round(scores.mean(),4), round(baseline_binary_pos,4)))
-        
-        return uncorrelated
-
-
-    
-    def correlation_with_label(self, type_corr='all', verbose=False):
-        """Checks correlation with label.
-
-        Parameters
-        ----------------
-        type_corr (str): type of correlation. Values are ['point_biserial_corr', 'logistic_regression', 'all']
-            Default: 'all'
         verbose (bool): returns info.
+            Default: False
         """
         
-        if type_corr not in ['point_biserial_corr', 'logistic_regression', 'all']:
+        if isinstance(type_corr, str):
+            type_corr = [type_corr]
+        if not set(type_corr).issubset({'point_biserial_corr', 'logistic_regression', 'kruskal_wallis_corr', 'wilcoxon_corr'}):
             raise ValueError(
-            "Argument 'type_corr' has an incorrect value: use 'point_biserial_corr', 'logistic_regression', 'all'")
+            "Argument 'type_corr' has an incorrect value: use 'point_biserial_corr', 'logistic_regression', 'kruskal_wallis_corr', 'wilcoxon_corr'")
+        
+        # for the intersection we create a dictionary to store the uncorrelated columns
+        #for every method, then we merge them.
+        if intersection:
+            for key in self.data_dict.keys():
+                self.to_drop[key]= dict()
+            
+            
+        if 'logistic_regression' in type_corr:
+            for key in self.data_dict.keys():
+                print(key)
+                if key != 'fa':
+                    if verbose:
+                        print(key)
+                    cols_to_drop = logistic_regression_corr(self.data_dict[key], self.labels_dict[key], verbose=verbose)
+                    # if we want intersection of uncorrelated features
+                    if intersection:
+                        #stores the features in a dictionary
+                        self.to_drop[key]['logistic_regression'] = cols_to_drop
+                    # if we want union of uncorrelated features
+                    else:
+                        self.to_drop[key] = self.to_drop[key].union(cols_to_drop)
+                    print(self.to_drop[key])
             
         
-        if type_corr == 'logistic_regression':
+        if 'point_biserial_corr' in type_corr:    
             for key in self.data_dict.keys():
+                print(key)
                 if key != 'fa':
                     if verbose:
                         print(key)
-                    self.to_drop[key] = self.logistic_regression_corr(self.data_dict[key], self.labels_dict[key], verbose=verbose)
-                    # remove uncorrelated features
-                    if self.to_drop[key]:
-                        self.data_dict[key] = self.data_dict[key].drop(list(self.to_drop[key]), axis=1)
-        
-        
-        elif type_corr == 'point_biserial_corr':    
-            for key in self.data_dict.keys():
-                if key != 'fa':
-                    if verbose:
-                        print(key)
-                    self.to_drop[key] = self.point_biserial_corr(self.data_dict[key], self.labels_dict[key], verbose=verbose)
-                    # remove uncorrelated features
-                    if self.to_drop[key]:
-                        self.data_dict[key] = self.data_dict[key].drop(list(self.to_drop[key]), axis=1)
-        
-        
-        elif type_corr == 'all':
-             for key in self.data_dict.keys():
-                if key != 'fa':
-                    if verbose:
-                        print(key)
-                    self.to_drop[key] = self.point_biserial_corr(self.data_dict[key], self.labels_dict[key], verbose=verbose)
-                    self.to_drop[key].intersection(self.logistic_regression_corr(self.data_dict[key], self.labels_dict[key], verbose=verbose))
-                    # remove uncorrelated features
-                    if self.to_drop[key]:
-                        self.data_dict[key] = self.data_dict[key].drop(list(self.to_drop[key]), axis=1)
-        
-    
-    
-    def spearman_corr(self, X, verbose=False):
-        """Spearman correlation checks for linear correlation between continuous features.
-        It is non-parametric, so normality of the variables is not necessary.
-
-        Parameters
-        ----------------
-        X (pd.DataFrame): data.
-        verbose (bool): returns scores.
-            Default: False
-
-        Returns
-        ----------------
-        List of pairs of highly correlated features (>0.85) in descending correlation order.
-        """
-        
-        correlated = dict()
-        
-        for col1, col2 in itertools.combinations(X.columns, 2):
-            corr, _ = spearmanr(X[col1].values, X[col2].values)
+                    cols_to_drop = point_biserial_corr(self.data_dict[key], self.labels_dict[key], self.pb_corr_threshold, verbose=verbose) 
+                    print(cols_to_drop)
+                    # if we want intersection of uncorrelated features
+                    if intersection:
+                        #stores the features in a dictionary
+                        self.to_drop[key]['point_biserial_corr'] = cols_to_drop
+                    # if we want union of uncorrelated features
+                    else:
+                        self.to_drop[key] = self.to_drop[key].union(cols_to_drop)
+                    print(self.to_drop[key])
             
-            if corr >= 0.85:
-                correlated[corr]=[col1,col2]
-                
-                if verbose:
-                    print('correlated columns: {} - {}, Spearman Correlation {}'.format(col1, col2, round(corr,4)))
-        # order by descending correlation
-        ord_correlated = OrderedDict(sorted(correlated.items(), reverse=True))
+        if 'kruskal_wallis_corr' in type_corr:
+            for key in self.data_dict.keys():
+                print(key)
+                if key != 'fa':
+                    if verbose:
+                        print(key)
+                    cols_to_drop = point_biserial_corr(self.data_dict[key], self.labels_dict[key], self.kruskal_pval_threshold, verbose=verbose) 
+                    # if we want intersection of uncorrelated features
+                    if intersection:
+                        #stores the features in a dictionary
+                         self.to_drop[key]['kruskal_wallis_corr'] = cols_to_drop
+                    # if we want union of uncorrelated features
+                    else:
+                        self.to_drop[key] = self.to_drop[key].union(cols_to_drop)
+                    print(self.to_drop[key])
         
-        # return list of correlated pairs in descending correlation order
-        return list(ord_correlated.values())
-    
-    
-
-    def remove_correlated_feature(self, X, y, correlated_pairs, verbose=False):
-        """Removes the less correlated feature with the target from a pair of highly correlated feature.
-        Correlation with the target is calculated as the AUPRC of a logistic regression between
-        the feature and the target.
-
-        Parameters
-        ----------------
-        X (pd.DataFrame): data.
-        y (pd.Series): label
-        correlated_pairs (list): list of pairs of correlated features
-        verbose (bool): returns scores.
-            Default: False
-
-        Returns
-        ----------------
-        Dataframe with no correlated pairs.
-        """
-
-        for pair in correlated_pairs:
-            col1, col2 = pair
-            if col1 in X and col2 in X:
-                x1 = X[col1].values.reshape(-1, 1)
-                x2 = X[col2].values.reshape(-1, 1)
-
-                # perform 3-folds cv with logistic regression
-                cv = KFold(n_splits=3, random_state=123, shuffle=True)
-                model = LogisticRegression()
-
-                # compute the AUPRC for the positive score
-                AUPRC = make_scorer(average_precision_score, average='weighted')
-                scores1 = cross_val_score(model, x1, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
-                scores2 = cross_val_score(model, x2, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
-
-                if verbose:
-                    print('columns to compare: {} vs {}, AUPRC: {} vs {}'.format(col1, col2, scores1.mean(), scores2.mean()))
-
-                if scores1.mean() >= scores2.mean():
-                    X = X.drop([col2], axis=1)
-                    print('removed column: {}'.format(col2))
-                else:
-                    X = X.drop([col1], axis=1)
-                    print('removed column:  {}'.format(col1))
-                    
-        # return new dataframe with dropped correlated features.
-        return X
+        if 'wilcoxon_corr' in type_corr:
+            for key in self.data_dict.keys():
+                print(key)
+                if key != 'fa':
+                    if verbose:
+                        print(key)
+                    cols_to_drop = point_biserial_corr(self.data_dict[key], self.labels_dict[key], self.wilcoxon_pval_threshold, verbose=verbose) 
+                    # if we want intersection of uncorrelated features
+                    if intersection:
+                        #stores the features in a dictionary
+                        self.to_drop[key]['wilcoxon_corr'] = cols_to_drop
+                    # if we want union of uncorrelated features
+                    else:
+                        self.to_drop[key] = self.to_drop[key].union(cols_to_drop)
+                    print(self.to_drop[key])
+        
+        
+        # drop all the resulting incorrelated keys
+        for key in self.data_dict.keys():
+            if key != 'fa':
+                # if intersection merge all the sets
+                if intersection:
+                    self.to_drop[key] = set.intersection(*self.to_drop[key].values())
+                #drop columns
+              #  if verbose:
+                print('\nColumns to drop for {}: {}'.format(key, self.to_drop[key]))
+                self.data_dict[key] = self.data_dict[key].drop(list(self.to_drop[key]), axis=1)
+        
     
     
     
@@ -313,8 +236,8 @@ class Data_Prepare():
                 if key != 'fa':
                     if verbose:
                         print('\n', key)
-                    correlated_pairs = self.spearman_corr(self.data_dict[key], verbose=verbose)
-                    self.data_dict[key] =  self.remove_correlated_feature(self.data_dict[key], self.labels_dict[key], correlated_pairs, verbose=verbose)
+                    correlated_pairs = spearman_corr(self.data_dict[key], self.spearman_corr_threshold, verbose=verbose)
+                    self.data_dict[key] =  remove_correlated_features(self.data_dict[key], self.labels_dict[key], correlated_pairs, verbose=verbose)
                     
                     
     
@@ -411,8 +334,7 @@ class Data_Prepare():
 
         return ( self.X_train.reset_index(drop=True), self.X_test.reset_index(drop=True), 
                 self.y_train.reset_index(drop=True) , self.y_test.reset_index(drop=True),
-                self.index )
-                
+                self.index )                
 
 
                 
@@ -533,8 +455,23 @@ class Build_DataLoader_Pipeline():
     containing preprocessed data.
     n_neighbours: number of neighbours for KNN imputer.
         Default: 5
-    type_corr (str): type of correlation. Values are ['point_biserial_corr', 'logistic_regression', 'all']
-        Default: 'all'
+    type_corr (str or list of str): type of correlation. Values are ['point_biserial_corr', 
+        'logistic_regression', 'kruskal_wallis_corr', 'wilcoxon_corr'].
+    intersection (bool): whether to remove the uncorrelated features selected by all the methods (intersection)
+        or the uncorrelated features selected by at least one method (union).
+        Default: False
+    pb_corr_threshold: point-biserial correlation threshold for correlation
+        between X and y.
+        Default: 0.05
+    kruskal_pval_threshold: kruskal-wallis p-value threshold for correlation
+        between X and y.
+        Default: 0.05
+    wilcoxon_pval_threshold: wilcoxon signed-rank p-value threshold for
+        correlation between X and y.
+        Default: 0.05
+    spearman_corr_threshold: Spearman correlation threshold for correlation
+        between different features.
+        Default: 0.85
     verbose (bool): returns info.
         Default: False
     """
@@ -544,7 +481,12 @@ class Build_DataLoader_Pipeline():
                  labels_dict,
                  path_name=None,
                  n_neighbors=5,
-                 type_corr='all',
+                 type_corr='kruskal_wallis_corr',
+                 intersection=False, 
+                 pb_corr_threshold=0.05,
+                 kruskal_pval_threshold = 0.05,
+                 wilcoxon_pval_threshold = 0.05,
+                 spearman_corr_threshold=0.85,
                  verbose=False):
     
         self.data_dict =  data_dict
@@ -552,6 +494,12 @@ class Build_DataLoader_Pipeline():
         self.path_name = path_name
         self.n_neighbors = n_neighbors
         self.type_corr = type_corr
+        self.intersection = intersection
+        self.pb_corr_threshold = pb_corr_threshold
+        self.kruskal_pval_threshold = kruskal_pval_threshold
+        self.wilcoxon_pval_threshold = wilcoxon_pval_threshold
+        self.spearman_corr_threshold = spearman_corr_threshold
+
         self.verbose = verbose
 
         self.data_class = []
@@ -571,7 +519,7 @@ class Build_DataLoader_Pipeline():
             self.data_class = Data_Prepare(self.data_dict, self.labels_dict, n_neighbors=self.n_neighbors)
             self.data_class.transform()
             print('Data transformation Done!\n')
-            self.data_class.correlation_with_label(type_corr=self.type_corr, verbose=self.verbose)
+            self.data_class.correlation_with_label(type_corr=self.type_corr, intersection=self.intersection, verbose=self.verbose)
             print('Check correlation with labels Done!\n')
             self.data_class.correlation_btw_features(verbose=self.verbose)  
             print('Check correlation between features Done!\n')  
