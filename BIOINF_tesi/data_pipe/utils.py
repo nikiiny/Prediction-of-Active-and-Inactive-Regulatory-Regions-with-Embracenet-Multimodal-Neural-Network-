@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import itertools
+from collections import defaultdict, OrderedDict
 from scipy.stats import pointbiserialr
 from sklearn.model_selection import KFold
 from sklearn.model_selection import cross_val_score
@@ -10,7 +11,6 @@ from sklearn.metrics import average_precision_score
 from scipy.stats import spearmanr
 from scipy.stats import kruskal
 from scipy.stats import wilcoxon
-from collections import defaultdict
 
 
 
@@ -244,10 +244,8 @@ def remove_correlated_features(X, y, correlated_pairs, verbose=False):
 
             if scores1.mean() >= scores2.mean():
                 X = X.drop([col2], axis=1)
-                print('removed column: {}'.format(col2))
             else:
                 X = X.drop([col1], axis=1)
-                print('removed column:  {}'.format(col1))
                     
     # return new dataframe with dropped correlated features.
     return X

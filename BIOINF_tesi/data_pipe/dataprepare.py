@@ -3,21 +3,18 @@ from tqdm.notebook import tqdm
 import re
 import pandas as pd
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
+import pickle
+import random
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.preprocessing import RobustScaler
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.impute import KNNImputer
-import random
 import torch
 import torch.nn.functional as F
-import pickle
+from torch.utils.data import Dataset, DataLoader, Sampler
 from sklearn.model_selection import train_test_split
-import re
-from torch.utils.data import Sampler
-from collections import OrderedDict
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 
 from .utils import point_biserial_corr, logistic_regression_corr, kruskal_wallis_corr, wilcoxon_corr, spearman_corr, remove_correlated_features
 
@@ -89,9 +86,8 @@ class Data_Prepare():
         
         self.sequence = []
         
-        self.to_drop = defaultdict(lambda: set())
-    
-                    
+        self.to_drop = defaultdict(set)
+               
     def scale_data_genfeatures(self):
         """Applies robust scaler to numeric genomic features by row/column?"""
         for key in self.data_dict.keys():
@@ -118,7 +114,7 @@ class Data_Prepare():
     
     
     
-    def correlation_with_label(self, type_corr, intersection=False, verbose=False):
+    def correlation_with_label(self, type_corr='kruskal_wallis_corr', intersection=False, verbose=False):
         """Checks correlation of features with label and deletes uncorrelated columns.
 
         Parameters
@@ -147,7 +143,6 @@ class Data_Prepare():
             
         if 'logistic_regression' in type_corr:
             for key in self.data_dict.keys():
-                print(key)
                 if key != 'fa':
                     if verbose:
                         print(key)
@@ -159,17 +154,14 @@ class Data_Prepare():
                     # if we want union of uncorrelated features
                     else:
                         self.to_drop[key] = self.to_drop[key].union(cols_to_drop)
-                    print(self.to_drop[key])
             
         
         if 'point_biserial_corr' in type_corr:    
             for key in self.data_dict.keys():
-                print(key)
                 if key != 'fa':
                     if verbose:
                         print(key)
                     cols_to_drop = point_biserial_corr(self.data_dict[key], self.labels_dict[key], self.pb_corr_threshold, verbose=verbose) 
-                    print(cols_to_drop)
                     # if we want intersection of uncorrelated features
                     if intersection:
                         #stores the features in a dictionary
@@ -177,11 +169,9 @@ class Data_Prepare():
                     # if we want union of uncorrelated features
                     else:
                         self.to_drop[key] = self.to_drop[key].union(cols_to_drop)
-                    print(self.to_drop[key])
             
         if 'kruskal_wallis_corr' in type_corr:
             for key in self.data_dict.keys():
-                print(key)
                 if key != 'fa':
                     if verbose:
                         print(key)
@@ -193,11 +183,9 @@ class Data_Prepare():
                     # if we want union of uncorrelated features
                     else:
                         self.to_drop[key] = self.to_drop[key].union(cols_to_drop)
-                    print(self.to_drop[key])
         
         if 'wilcoxon_corr' in type_corr:
             for key in self.data_dict.keys():
-                print(key)
                 if key != 'fa':
                     if verbose:
                         print(key)
@@ -209,7 +197,6 @@ class Data_Prepare():
                     # if we want union of uncorrelated features
                     else:
                         self.to_drop[key] = self.to_drop[key].union(cols_to_drop)
-                    print(self.to_drop[key])
         
         
         # drop all the resulting incorrelated keys
@@ -219,8 +206,8 @@ class Data_Prepare():
                 if intersection:
                     self.to_drop[key] = set.intersection(*self.to_drop[key].values())
                 #drop columns
-              #  if verbose:
-                print('\nColumns to drop for {}: {}'.format(key, self.to_drop[key]))
+                if verbose:
+                    print('\nColumns to drop for {}: {}'.format(key, self.to_drop[key]))
                 self.data_dict[key] = self.data_dict[key].drop(list(self.to_drop[key]), axis=1)
         
     
@@ -260,7 +247,7 @@ class Data_Prepare():
         Training set, Test set, training labels, test labels
         """
         
-        if self.sequence:
+        if sequence:
             # if the task is active_E_vs_active_P or inactive_E_vs_inactive_P we need to select
             #the observations in fa corresponding to the labels index of the cell line
             if 'index_fa' in self.labels_dict:
@@ -328,8 +315,7 @@ class Data_Prepare():
             raise ValueError(
             "Argument 'cell_line' has an incorrect value: use 'A549', 'GM12878', 'H1', 'HEK293', 'HEPG2', 'K562', 'MCF7'")
             
-        
-        self.split_data(cell_line=cell_line, hyper_tuning=hyper_tuning, test_size=test_size, validation_size=validation_size)
+        self.split_data(cell_line=cell_line, hyper_tuning=hyper_tuning, sequence=sequence, test_size=test_size, validation_size=validation_size)
     
 
         return ( self.X_train.reset_index(drop=True), self.X_test.reset_index(drop=True), 
@@ -521,8 +507,8 @@ class Build_DataLoader_Pipeline():
             print('Data transformation Done!\n')
             self.data_class.correlation_with_label(type_corr=self.type_corr, intersection=self.intersection, verbose=self.verbose)
             print('Check correlation with labels Done!\n')
-            self.data_class.correlation_btw_features(verbose=self.verbose)  
-            print('Check correlation between features Done!\n')  
+          #  self.data_class.correlation_btw_features(verbose=self.verbose)  
+       #     print('Check correlation between features Done!\n')  
             
             with open("data_prepare_class_{}".format(self.path_name), "wb") as fout:
                 pickle.dump(self.data_class, fout)
