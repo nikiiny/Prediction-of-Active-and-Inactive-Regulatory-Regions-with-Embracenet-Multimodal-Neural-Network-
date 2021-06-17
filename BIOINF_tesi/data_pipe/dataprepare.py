@@ -26,6 +26,7 @@ from sklearn.metrics import make_scorer
 from sklearn.metrics import average_precision_score
 from scipy.stats import spearmanr
 from torch.utils.data import Sampler
+from collections import OrderedDict
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -233,23 +234,24 @@ class Data_Prepare():
 
         Returns
         ----------------
-        Set of pairs of highly correlated features (>0.85).
+        List of pairs of highly correlated features (>0.85) in descending correlation order.
         """
         
-        correlated = set()
+        correlated = dict()
         
         for col1, col2 in itertools.combinations(X.columns, 2):
             corr, _ = spearmanr(X[col1].values, X[col2].values)
             
             if corr >= 0.85:
-                correlated.add(frozenset({col1,col2}))
+                correlated[corr]=[col1,col2]
                 
                 if verbose:
                     print('correlated columns: {} - {}, Spearman Correlation {}'.format(col1, col2, round(corr,4)))
+        # order by descending correlation
+        ord_correlated = OrderedDict(sorted(correlated.items(), reverse=True))
         
-        # NB: ORDINA PER CORRELAZIONE decrescente
-        return correlated
-    
+        # return list of correlated pairs in descending correlation order
+        return list(ord_correlated.values())
     
     
 
@@ -262,20 +264,18 @@ class Data_Prepare():
         ----------------
         X (pd.DataFrame): data.
         y (pd.Series): label
-        correlated_pairs (set/list): list of pairs of correlated features
+        correlated_pairs (list): list of pairs of correlated features
         verbose (bool): returns scores.
             Default: False
 
         Returns
         ----------------
-        Set of features to remove.
+        Dataframe with no correlated pairs.
         """
 
-        correlated_to_remove = set()
-
         for pair in correlated_pairs:
-            if len(pair) >1:
-                col1, col2 = pair
+            col1, col2 = pair
+            if col1 in X and col2 in X:
                 x1 = X[col1].values.reshape(-1, 1)
                 x2 = X[col2].values.reshape(-1, 1)
 
@@ -286,15 +286,20 @@ class Data_Prepare():
                 # compute the AUPRC for the positive score
                 AUPRC = make_scorer(average_precision_score, average='weighted')
                 scores1 = cross_val_score(model, x1, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
-                scores2 = cross_val_score(model, x1, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
+                scores2 = cross_val_score(model, x2, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
 
                 if verbose:
                     print('columns to compare: {} vs {}, AUPRC: {} vs {}'.format(col1, col2, scores1.mean(), scores2.mean()))
 
                 if scores1.mean() >= scores2.mean():
-                    correlated_to_remove.add(col2)
+                    X = X.drop([col2], axis=1)
+                    print('removed column: {}'.format(col2))
                 else:
-                    correlated_to_remove.add(col1)
+                    X = X.drop([col1], axis=1)
+                    print('removed column:  {}'.format(col1))
+                    
+        # return new dataframe with dropped correlated features.
+        return X
     
     
     
@@ -307,13 +312,11 @@ class Data_Prepare():
         for key in self.data_dict.keys():
                 if key != 'fa':
                     if verbose:
-                        print(key)
+                        print('\n', key)
                     correlated_pairs = self.spearman_corr(self.data_dict[key], verbose=verbose)
-                    self.to_drop[key] =  self.remove_correlated_feature(self.data_dict[key], self.labels_dict[key], correlated_pairs, verbose=verbose)
-                    # for each pair of correlated features, remove the one less correlated to the output
-                    if self.to_drop[key]:
-                        self.data_dict[key] = self.data_dict[key].drop(list(self.to_drop[key]), axis=1)
-         
+                    self.data_dict[key] =  self.remove_correlated_feature(self.data_dict[key], self.labels_dict[key], correlated_pairs, verbose=verbose)
+                    
+                    
     
     def split_data(self, cell_line, hyper_tuning, sequence, test_size, validation_size):
         """Splits data into training and test set for model testing. Splits further the training
@@ -409,6 +412,9 @@ class Data_Prepare():
         return ( self.X_train.reset_index(drop=True), self.X_test.reset_index(drop=True), 
                 self.y_train.reset_index(drop=True) , self.y_test.reset_index(drop=True),
                 self.index )
+                
+
+
                 
 
 
