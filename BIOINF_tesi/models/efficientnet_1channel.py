@@ -1,6 +1,5 @@
-"""
-They are built to mirror those in the official TensorFlow implementation.
-Modified version to use only one channel.
+"""model.py - Model and module class for EfficientNet.
+   They are built to mirror those in the official TensorFlow implementation.
 """
 
 # Author: lukemelas (github username)
@@ -10,7 +9,7 @@ Modified version to use only one channel.
 import torch
 from torch import nn
 from torch.nn import functional as F
-from .efficientnet_utils import (
+from .EfficientNet_utils import (
     round_filters,
     round_repeats,
     drop_connect,
@@ -36,10 +35,12 @@ VALID_MODELS = (
 
 class MBConvBlock(nn.Module):
     """Mobile Inverted Residual Bottleneck Block.
+
     Args:
         block_args (namedtuple): BlockArgs, defined in utils.py.
         global_params (namedtuple): GlobalParam, defined in utils.py.
         image_size (tuple or list): [image_height, image_width].
+
     References:
         [1] https://arxiv.org/abs/1704.04861 (MobileNet v1)
         [2] https://arxiv.org/abs/1801.04381 (MobileNet v2)
@@ -89,9 +90,11 @@ class MBConvBlock(nn.Module):
 
     def forward(self, inputs, drop_connect_rate=None):
         """MBConvBlock's forward function.
+
         Args:
             inputs (tensor): Input tensor.
             drop_connect_rate (bool): Drop connect rate (float, between 0 and 1).
+
         Returns:
             Output of this block after processing.
         """
@@ -130,22 +133,24 @@ class MBConvBlock(nn.Module):
 
     def set_swish(self, memory_efficient=True):
         """Sets swish function as memory efficient (for training) or standard (for export).
+
         Args:
             memory_efficient (bool): Whether to use memory-efficient version of swish.
         """
         self._swish = MemoryEfficientSwish() if memory_efficient else Swish()
 
-        
-##############
 
-class EfficientNet(nn.Module):
+class EfficientNet_1Channel(nn.Module):
     """EfficientNet model.
        Most easily loaded with the .from_name or .from_pretrained methods.
+
     Args:
         blocks_args (list[namedtuple]): A list of BlockArgs to construct blocks.
         global_params (namedtuple): A set of GlobalParams shared between blocks.
+
     References:
         [1] https://arxiv.org/abs/1905.11946 (EfficientNet)
+
     Example:
         >>> import torch
         >>> from efficientnet.model import EfficientNet
@@ -171,7 +176,7 @@ class EfficientNet(nn.Module):
         Conv2d = get_same_padding_conv2d(image_size=image_size)
 
         # Stem
-        in_channels = 1 # one channel -> genomic sequence
+        in_channels = 1  # 1 channel for sequential data
         out_channels = round_filters(32, self._global_params)  # number of output channels
         self._conv_stem = Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=False)
         self._bn0 = nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
@@ -215,6 +220,7 @@ class EfficientNet(nn.Module):
 
     def set_swish(self, memory_efficient=True):
         """Sets swish function as memory efficient (for training) or standard (for export).
+
         Args:
             memory_efficient (bool): Whether to use memory-efficient version of swish.
         """
@@ -225,8 +231,10 @@ class EfficientNet(nn.Module):
     def extract_endpoints(self, inputs):
         """Use convolution layer to extract features
         from reduction levels i in [1, 2, 3, 4, 5].
+
         Args:
             inputs (tensor): Input tensor.
+
         Returns:
             Dictionary of last intermediate features
             with reduction levels i in [1, 2, 3, 4, 5].
@@ -269,8 +277,10 @@ class EfficientNet(nn.Module):
 
     def extract_features(self, inputs):
         """use convolution layer to extract feature .
+
         Args:
             inputs (tensor): Input tensor.
+
         Returns:
             Output of the final convolution
             layer in the efficientnet model.
@@ -293,8 +303,10 @@ class EfficientNet(nn.Module):
     def forward(self, inputs):
         """EfficientNet's forward function.
            Calls extract_features to extract features, applies final linear layer, and returns logits.
+
         Args:
             inputs (tensor): Input tensor.
+
         Returns:
             Output of this model after processing.
         """
@@ -307,3 +319,58 @@ class EfficientNet(nn.Module):
             x = self._dropout(x)
             x = self._fc(x)
         return x
+
+    @classmethod
+    def from_name(cls, model_name, in_channels=1, **override_params):
+        """Create an efficientnet model according to name.
+
+        Args:
+            model_name (str): Name for efficientnet.
+            in_channels (int): Input data's channel number.
+            override_params (other key word params):
+                Params to override model's global_params.
+                Optional key:
+                    'width_coefficient', 'depth_coefficient',
+                    'image_size', 'dropout_rate',
+                    'num_classes', 'batch_norm_momentum',
+                    'batch_norm_epsilon', 'drop_connect_rate',
+                    'depth_divisor', 'min_depth'
+
+        Returns:
+            An efficientnet model.
+        """
+        cls._check_model_name_is_valid(model_name)
+        blocks_args, global_params = get_model_params(model_name, override_params)
+        model = cls(blocks_args, global_params)
+        #model._change_in_channels(in_channels) # no need to change channels, 1 channel is used
+        return model
+
+
+    @classmethod
+    def get_image_size(cls, model_name):
+        """Get the input image size for a given efficientnet model.
+
+        Args:
+            model_name (str): Name for efficientnet.
+
+        Returns:
+            Input image size (resolution).
+        """
+        cls._check_model_name_is_valid(model_name)
+        _, _, res, _ = efficientnet_params(model_name)
+        return res
+
+    @classmethod
+    def _check_model_name_is_valid(cls, model_name):
+        """Validates model name.
+
+        Args:
+            model_name (str): Name for efficientnet.
+
+        Returns:
+            bool: Is a valid name or not.
+        """
+        if model_name not in VALID_MODELS:
+            raise ValueError('model_name should be one of: ' + ', '.join(VALID_MODELS))
+
+    
