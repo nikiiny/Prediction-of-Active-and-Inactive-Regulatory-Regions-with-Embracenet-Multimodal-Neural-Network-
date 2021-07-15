@@ -2,94 +2,18 @@ import pandas as pd
 import numpy as np
 import itertools
 from collections import defaultdict, OrderedDict
-from scipy.stats import pointbiserialr
-from sklearn.model_selection import KFold
-from sklearn.model_selection import cross_val_score
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import make_scorer
 from sklearn.metrics import average_precision_score
 from scipy.stats import spearmanr
 from scipy.stats import kruskal
 from scipy.stats import wilcoxon
+from imblearn.over_sampling import SMOTE
 
 
-
-
-def point_biserial_corr(X, y, pb_corr_threshold=0.05, verbose=False):
-    """Point biserial correlation returns the correlation between a continuous and
-    binary variable (target). It is a parametric test, so it assumes the data to be normally
-    distributed.
-        
-    Parameters
-    ----------------
-    X (pd.DataFrame): data.
-    y (pd.Series): label.
-    pb_corr_threshold: threshold for eliminating X uncorrelated to y.
-        Default: 0.05
-    verbose (bool): returns scores.
-        Default: False
-
-    Returns
-    ------------
-    Set of columns uncorrelated with the target.
-    """
-        
-    uncorrelated = set()
-
-    for col in X.columns:
-        x = X[col]
-        corr,_ = pointbiserialr(x,y)
-        if abs(corr) < pb_corr_threshold:
-            uncorrelated.add(col)
-            if verbose:
-                print('uncorrelated column: {}, Point-biserial Correlation: {}'.format(col, round(corr,4)))
-        
-    return uncorrelated
-    
-    
-def logistic_regression_corr(X, y, verbose=False):
-    """The Logistic regression can be used to assess if a continuous variable has any 
-    effect on the target. It doesn't assume anything about the distribution of the variables.
-    The metric used is the area under the precision recall curve, which is compared to the 
-    baseline (when the model guesses at random the target.
-
-    Parameters
-    ----------------
-    X (pd.DataFrame): data.
-    y (pd.Series): label.
-    verbose (bool): returns scores.
-        Default: False
-
-    Returns
-    ----------------
-    Set of columns uncorrelated with the target (AUPRC = baseline).
-    """
-        
-    uncorrelated = set()
-        
-    for col in X.columns:
-        x = X[col].values.reshape(-1, 1)
-
-        # perform 3-folds cv with logistic regression
-        cv = KFold(n_splits=3, random_state=123, shuffle=True)
-        model = LogisticRegression()
-
-        baseline_binary_pos = len(y[y==1]) / len(y)
-
-        # compute the AUPRC for the positive score
-        AUPRC = make_scorer(average_precision_score, average='weighted')
-        scores = cross_val_score(model, x, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
-        
-        if scores.mean() <= baseline_binary_pos:
-            uncorrelated.add(col)
-                
-            if verbose:
-                print('uncorrelated column: {}, AUPRC: {}, Baseline positive class: {}'.format(col, round(scores.mean(),4), round(baseline_binary_pos,4)))
-        
-    return uncorrelated
+TYPE_TEST = ['wilcoxon_test','kruskal_wallis_test']
 
     
-def kruskal_wallis_corr(X, y, kruskal_pval_threshold = 0.05,verbose=False):
+def kruskal_wallis_test(X, y, kruskal_pval_threshold = 0.05,verbose=False):
     """The Kruskal–Wallis test by ranks, or one-way ANOVA on ranks, is a non-parametric method 
     for testing whether samples originate from the same distribution. The samples may have different
     sizes.
@@ -113,8 +37,8 @@ def kruskal_wallis_corr(X, y, kruskal_pval_threshold = 0.05,verbose=False):
         
     uncorrelated = set()
         
-    pos_index = y[y==1]
-    neg_index = y[y==0]
+    pos_index = y[y==1].index
+    neg_index = y[y==0].index
         
     for col in X.columns:
         pos_samples = X[col][pos_index]
@@ -125,13 +49,13 @@ def kruskal_wallis_corr(X, y, kruskal_pval_threshold = 0.05,verbose=False):
             uncorrelated.add(col)
                 
             if verbose:
-                print('uncorrelated column: {}, Kruskal-Wallis p-value: {}'.format(col, p_value))
+                print(f'uncorrelated column: {col}, Kruskal-Wallis p-value: {p_value}')
 
     return uncorrelated
     
     
     
-def wilcoxon_corr(X, y, wilcoxon_pval_threshold = 0.05,verbose=False):
+def wilcoxon_test(X, y, wilcoxon_pval_threshold = 0.05,verbose=False):
     """The Wilcoxon signed-rank test tests the null hypothesis that two related paired 
     samples come from the same distribution. In particular, it tests whether the distribution 
     of the differences x - y is symmetric about zero. It is a non-parametric version of the 
@@ -153,8 +77,8 @@ def wilcoxon_corr(X, y, wilcoxon_pval_threshold = 0.05,verbose=False):
         
     uncorrelated = set()
         
-    pos_index = y[y==1]
-    neg_index = y[y==0]
+    pos_index = y[y==1].index
+    neg_index = y[y==0].index
         
     for col in X.columns:
         pos_samples = X[col][pos_index]
@@ -165,15 +89,54 @@ def wilcoxon_corr(X, y, wilcoxon_pval_threshold = 0.05,verbose=False):
             uncorrelated.add(col)
                 
             if verbose:
-                print('uncorrelated column: {}, Wilcoxon p-value: {}'.format(col, p_value))
+                print(f'uncorrelated column: {col}, Wilcoxon p-value: {p_value}')
             
     return uncorrelated
 
 
 
+def wilcoxon_test_pval(X,y):
+    """Returns p-value of wilcoxon test between classes of X.
+    
+    Parameters
+    ----------------
+    X (pd.DataFrame): data.
+    y (pd.Series): label.
+    """
+    
+    pos_index = y[y==1].index
+    neg_index = y[y==0].index
+    pos_samples = X[pos_index].values
+    neg_samples = X[neg_index].values
+    
+    _, p_value = kruskal(pos_samples, neg_samples)
+    
+    return(p_value)
 
 
-def spearman_corr(X, spearman_corr_threshold=0.85, verbose=False):
+
+def kruskal_wallis_test_pval(X,y):
+    """Returns p-value of kruskal-wallis test between classes of X.
+    
+    Parameters
+    ----------------
+    X (pd.DataFrame): data.
+    y (pd.Series): label.
+    """
+    
+    pos_index = y[y==1].index
+    neg_index = y[y==0].index
+    pos_samples = X[pos_index].values
+    neg_samples = X[neg_index].values
+    
+    _, p_value = kruskal(pos_samples, neg_samples)
+    
+    return(p_value)
+
+
+
+
+def spearman_corr(X, spearman_corr_threshold=0.75, verbose=False):
         """Spearman correlation checks for linear correlation between continuous features.
         It is non-parametric, so normality of the variables is not necessary.
 
@@ -197,7 +160,7 @@ def spearman_corr(X, spearman_corr_threshold=0.85, verbose=False):
                 correlated[corr]=[col1,col2]
                 
                 if verbose:
-                    print('correlated columns: {} - {}, Spearman Correlation {}'.format(col1, col2, round(corr,4)))
+                    print(f'correlated columns: {col1} - {col2}, Spearman Correlation {round(corr,4)}')
         # order by descending correlation
         ord_correlated = OrderedDict(sorted(correlated.items(), reverse=True))
         
@@ -206,16 +169,20 @@ def spearman_corr(X, spearman_corr_threshold=0.85, verbose=False):
     
     
 
-def remove_correlated_features(X, y, correlated_pairs, verbose=False):
+def remove_correlated_features(X, y, correlated_pairs, type_test='wilcoxon_test', verbose=False):
     """Removes the less correlated feature with the target from a pair of highly correlated features.
-    Correlation with the target is calculated as the AUPRC of a logistic regression between
-    the feature and the target.
+    Correlation with the target is calculated as the wilcoxon test p-value or the kruskal-wallis test p-value.
+    A lower p-value means a lower support to null hypothesis, so a stronger ability of the variable
+    to discriminate between the different classes of the target.
 
     Parameters
     ----------------
     X (pd.DataFrame): data.
     y (pd.Series): label
     correlated_pairs (list): list of pairs of correlated features
+    type_test (str): type of test to decide which column to remove from a pair.
+        Possible values are: wilcoxon_test, kruskal_wallis_test.
+        Default: wilcoxon_test
     verbose (bool): returns scores.
         Default: False
 
@@ -227,25 +194,115 @@ def remove_correlated_features(X, y, correlated_pairs, verbose=False):
     for pair in correlated_pairs:
         col1, col2 = pair
         if col1 in X and col2 in X:
-            x1 = X[col1].values.reshape(-1, 1)
-            x2 = X[col2].values.reshape(-1, 1)
-
-            # perform 3-folds cv with logistic regression
-            cv = KFold(n_splits=3, random_state=123, shuffle=True)
-            model = LogisticRegression()
-
-            # compute the AUPRC for the positive score
-            AUPRC = make_scorer(average_precision_score, average='weighted')
-            scores1 = cross_val_score(model, x1, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
-            scores2 = cross_val_score(model, x2, y, scoring=AUPRC, cv=cv, n_jobs=-1, error_score="raise")
+            x1 = X[col1]
+            x2 = X[col2]
+            
+            if type_test not in TYPE_TEST:
+                raise ValueError(
+                f"Argument 'type_test' has an incorrect value: use one among {TYPE_TEST}")
+            
+            
+            if type_test == 'wilcoxon_test':
+                pval_1 = wilcoxon_test_pval(x1, y)
+                pval_2 = wilcoxon_test_pval(x2, y)
+            elif type_test == 'kruskal_wallis_test':
+                pval_1 = kruskal_wallis_test_pval(x1, y)
+                pval_2 = kruskal_wallis_test_pval(x2, y)
 
             if verbose:
-                print('columns to compare: {} vs {}, AUPRC: {} vs {}'.format(col1, col2, scores1.mean(), scores2.mean()))
+                print(f'columns to compare: {col1} vs {col2}, p-values: {pval_1} vs {pval_2}')
 
-            if scores1.mean() >= scores2.mean():
+            if pval_1 <= pval_2:
                 X = X.drop([col2], axis=1)
             else:
                 X = X.drop([col1], axis=1)
                     
     # return new dataframe with dropped correlated features.
     return X
+
+
+
+
+def get_imbalance(y):
+    """
+    Returns percentage of class imbalance.
+
+    Parameters
+    ------------
+    y (pd.Series): binary labels.
+    """
+    n_pos = y[y==1].count()
+    n_neg = y[y==0].count()
+    return float(n_pos/n_neg)
+
+
+
+def reverse_strand(sequence):
+    """
+    Returns str of complementary strand.
+
+    Parameters
+    --------------
+    sequence (str): genomic sequence (a,c,t,g).
+    """
+    nucleotides_dict = {'a':'t', 't':'a', 'c':'g', 'g':'c', 'n':'n'}
+    sequence = list(sequence.lower())
+    sequence = [nucleotides_dict[base] for base in sequence]
+    
+    return ''.join(sequence)
+
+
+
+def reverse_strand_augment(X,y):
+    """
+    Augment data and labels by adding complementary strands.
+
+    Parameters
+    --------------
+    X (pd.DataFrame): data about genomic sequences.
+    y (pd.Seres): binary labels.
+    """
+    
+    pos_index = y[y==1].index
+    pos_X = X.iloc[pos_index]
+            
+    X = pos_X.apply(lambda x: reverse_strand(x))
+    y = pd.Series([1]*len(pos_index))
+            
+    assert (len(X) == len(y))
+    
+    return X,y
+
+
+
+def data_augmentation(X, y, sequence, threshold=0.15):
+    """
+    Performs data augmentation. ........ comment
+    
+    Attributes:
+    X (pd.Series):
+    y (pd.Series)
+    """
+    
+    imbalance = get_imbalance(y)
+    if imbalance <= threshold:
+        
+        if sequence:
+            X_aug, y_aug = reverse_strand_augment(X,y)
+            
+            index = np.random.randint(0, len(X_aug), int( len(X_aug)*(threshold-imbalance)/imbalance ))
+            
+            X = X.append(X_aug.iloc[index])
+            y = y.append(y_aug.iloc[index])
+            
+            return X.reset_index(drop=True), y.reset_index(drop=True)
+        
+        else:
+            oversample_SMOTE = SMOTE(k_neighbors=3, sampling_strategy = threshold)
+            X, y = oversample_SMOTE.fit_resample(X, y.ravel())
+            
+            return X.reset_index(drop=True), pd.Series(y)
+    
+    else:
+        return X, y
+    

@@ -5,6 +5,10 @@ import pandas as pd
 import numpy as np
 
 
+TASKS = ['active_E_vs_inactive_E', 'active_P_vs_inactive_P', 
+                        'active_E_vs_active_P', 'inactive_E_vs_inactive_P',
+                        'active_EP_vs_inactive_rest']
+
 class Load_Create_Task():
     """Loads enhancers and promoters data, creates 2 dictionaries for each and 
     stores the different data about cell lines and labels.
@@ -98,13 +102,13 @@ class Load_Create_Task():
                 self.promoters_labels_dict[key] = self.promoters_dict['bed'][key]
         
         if verbose:
-            print('enhancers files:\n{}\n'.format(sorted(self.enhancers_dict.keys())))
+            print(f'enhancers files:\n{sorted(self.enhancers_dict.keys())}\n')
             for key in self.enhancers_dict.keys():
-                print('{} has shape: {}'.format(key, self.enhancers_dict[key].shape))
+                print(f'{key} has shape: {self.enhancers_dict[key].shape}')
 
-            print('\npromoters files:\n{}\n'.format(sorted(self.enhancers_dict.keys())))
+            print(f'\npromoters files:\n{sorted(self.enhancers_dict.keys())}\n')
             for key in self.promoters_dict.keys():
-                print('{} has shape: {}'.format(key, self.promoters_dict[key].shape))
+                print(f'{key} has shape: {self.promoters_dict[key].shape}')
         
     
     def get_task(self, task):
@@ -125,11 +129,9 @@ class Load_Create_Task():
         Dictionary of data, Dictionary of label
         """
         
-        if task not in ['active_E_vs_inactive_E', 'active_P_vs_inactive_P', 
-                        'active_E_vs_active_P', 'inactive_E_vs_inactive_P',
-                        'active_EP_vs_inactive_rest']:
+        if task not in TASKS:
             raise ValueError(
-                "Argument 'task' has an incorrect value: use 'active_E_vs_inactive_E', 'active_P_vs_inactive_P', 'active_E_vs_active_P', 'inactive_E_vs_inactive_P','active_EP_vs_inactive_rest' ")
+                f"Argument 'task' has an incorrect value: use one among {TASKS} ")
     
         
         if task == 'active_E_vs_inactive_E':

@@ -16,10 +16,13 @@ from torch.utils.data import Dataset, DataLoader, Sampler
 from sklearn.model_selection import train_test_split
 from collections import OrderedDict, defaultdict
 
-from .utils import point_biserial_corr, logistic_regression_corr, kruskal_wallis_corr, wilcoxon_corr, spearman_corr, remove_correlated_features
+from .utils import (kruskal_wallis_test, wilcoxon_test, spearman_corr, remove_correlated_features,
+    data_augmentation)
 
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+CELL_LINES = ['A549','GM12878', 'H1', 'HEK293', 'HEPG2', 'K562', 'MCF7']
 
 
 class Data_Prepare():
@@ -34,8 +37,6 @@ class Data_Prepare():
     labels_dict (dict): dictionary of cell lines labels (pd.Series).
     n_neighbours: number of neighbours for KNN imputer.
         Default: 5
-    pb_corr_threshold: point-biserial correlation threshold for correlation
-        between X and y.
         Default: 0.05
     kruskal_pval_threshold: kruskal-wallis p-value threshold for correlation
         between X and y.
@@ -45,17 +46,16 @@ class Data_Prepare():
         Default: 0.05
     spearman_corr_threshold: Spearman correlation threshold for correlation
         between different features.
-        Default: 0.85
+        Default: 0.75
     """
     
     def __init__(self, 
                  data_dict, 
                  labels_dict, 
                  n_neighbors=5,
-                 pb_corr_threshold=0.05,
                  kruskal_pval_threshold = 0.05,
                  wilcoxon_pval_threshold = 0.05,
-                 spearman_corr_threshold=0.85
+                 spearman_corr_threshold=0.75
                 ):
         
         self.labels_dict = labels_dict.copy()
@@ -71,7 +71,6 @@ class Data_Prepare():
                 
         
         self.n_neighbors = n_neighbors
-        self.pb_corr_threshold = pb_corr_threshold
         self.kruskal_pval_threshold = kruskal_pval_threshold
         self.wilcoxon_pval_threshold = wilcoxon_pval_threshold
         self.spearman_corr_threshold = spearman_corr_threshold
@@ -114,13 +113,12 @@ class Data_Prepare():
     
     
     
-    def correlation_with_label(self, type_corr='kruskal_wallis_corr', intersection=False, verbose=False):
+    def correlation_with_label(self, type_test='kruskal_wallis_test', intersection=False, verbose=False):
         """Checks correlation of features with label and deletes uncorrelated columns.
 
         Parameters
         ----------------
-        type_corr (str or list of str): type of correlation. Values are ['point_biserial_corr', 
-        'logistic_regression', 'kruskal_wallis_corr', 'wilcoxon_corr'].
+        type_test (str or list of str): type of correlation test. Values are ['kruskal_wallis_test', 'wilcoxon_test'].
         intersection (bool): whether to remove the uncorrelated features selected by all the methods (intersection)
             or the uncorrelated features selected by at least one method (union).
             Default: False
@@ -128,72 +126,43 @@ class Data_Prepare():
             Default: False
         """
         
-        if isinstance(type_corr, str):
-            type_corr = [type_corr]
-        if not set(type_corr).issubset({'point_biserial_corr', 'logistic_regression', 'kruskal_wallis_corr', 'wilcoxon_corr'}):
+        if isinstance(type_test, str):
+            type_test = [type_test]
+        if not set(type_test).issubset({'kruskal_wallis_test', 'wilcoxon_test'}):
             raise ValueError(
-            "Argument 'type_corr' has an incorrect value: use 'point_biserial_corr', 'logistic_regression', 'kruskal_wallis_corr', 'wilcoxon_corr'")
+            "Argument 'type_test' has an incorrect value: use 'kruskal_wallis_test', 'wilcoxon_test'")
         
         # for the intersection we create a dictionary to store the uncorrelated columns
         #for every method, then we merge them.
         if intersection:
             for key in self.data_dict.keys():
                 self.to_drop[key]= dict()
+    
             
-            
-        if 'logistic_regression' in type_corr:
+        if 'kruskal_wallis_test' in type_test:
             for key in self.data_dict.keys():
                 if key != 'fa':
                     if verbose:
                         print(key)
-                    cols_to_drop = logistic_regression_corr(self.data_dict[key], self.labels_dict[key], verbose=verbose)
+                    cols_to_drop = kruskal_wallis_test(self.data_dict[key], self.labels_dict[key], self.kruskal_pval_threshold, verbose=verbose) 
                     # if we want intersection of uncorrelated features
                     if intersection:
                         #stores the features in a dictionary
-                        self.to_drop[key]['logistic_regression'] = cols_to_drop
-                    # if we want union of uncorrelated features
-                    else:
-                        self.to_drop[key] = self.to_drop[key].union(cols_to_drop)
-            
-        
-        if 'point_biserial_corr' in type_corr:    
-            for key in self.data_dict.keys():
-                if key != 'fa':
-                    if verbose:
-                        print(key)
-                    cols_to_drop = point_biserial_corr(self.data_dict[key], self.labels_dict[key], self.pb_corr_threshold, verbose=verbose) 
-                    # if we want intersection of uncorrelated features
-                    if intersection:
-                        #stores the features in a dictionary
-                        self.to_drop[key]['point_biserial_corr'] = cols_to_drop
-                    # if we want union of uncorrelated features
-                    else:
-                        self.to_drop[key] = self.to_drop[key].union(cols_to_drop)
-            
-        if 'kruskal_wallis_corr' in type_corr:
-            for key in self.data_dict.keys():
-                if key != 'fa':
-                    if verbose:
-                        print(key)
-                    cols_to_drop = point_biserial_corr(self.data_dict[key], self.labels_dict[key], self.kruskal_pval_threshold, verbose=verbose) 
-                    # if we want intersection of uncorrelated features
-                    if intersection:
-                        #stores the features in a dictionary
-                         self.to_drop[key]['kruskal_wallis_corr'] = cols_to_drop
+                         self.to_drop[key]['kruskal_wallis_test'] = cols_to_drop
                     # if we want union of uncorrelated features
                     else:
                         self.to_drop[key] = self.to_drop[key].union(cols_to_drop)
         
-        if 'wilcoxon_corr' in type_corr:
+        if 'wilcoxon_test' in type_test:
             for key in self.data_dict.keys():
                 if key != 'fa':
                     if verbose:
                         print(key)
-                    cols_to_drop = point_biserial_corr(self.data_dict[key], self.labels_dict[key], self.wilcoxon_pval_threshold, verbose=verbose) 
+                    cols_to_drop = wilcoxon_test(self.data_dict[key], self.labels_dict[key], self.wilcoxon_pval_threshold, verbose=verbose) 
                     # if we want intersection of uncorrelated features
                     if intersection:
                         #stores the features in a dictionary
-                        self.to_drop[key]['wilcoxon_corr'] = cols_to_drop
+                        self.to_drop[key]['wilcoxon_test'] = cols_to_drop
                     # if we want union of uncorrelated features
                     else:
                         self.to_drop[key] = self.to_drop[key].union(cols_to_drop)
@@ -207,13 +176,13 @@ class Data_Prepare():
                     self.to_drop[key] = set.intersection(*self.to_drop[key].values())
                 #drop columns
                 if verbose:
-                    print('\nColumns to drop for {}: {}'.format(key, self.to_drop[key]))
+                    print(f'\nColumns to drop for {key}: {self.to_drop[key]}')
                 self.data_dict[key] = self.data_dict[key].drop(list(self.to_drop[key]), axis=1)
         
     
     
     
-    def correlation_btw_features(self, verbose=False):
+    def correlation_btw_features(self, type_test='wilcoxon_test',  verbose=False):
         """Runs Spearman correlation and remove less correlated feature from a pair
         of correlated features."""
         
@@ -224,11 +193,12 @@ class Data_Prepare():
                     if verbose:
                         print('\n', key)
                     correlated_pairs = spearman_corr(self.data_dict[key], self.spearman_corr_threshold, verbose=verbose)
-                    self.data_dict[key] =  remove_correlated_features(self.data_dict[key], self.labels_dict[key], correlated_pairs, verbose=verbose)
+                    self.data_dict[key] =  remove_correlated_features(self.data_dict[key], self.labels_dict[key], 
+                                                                      correlated_pairs, type_test=type_test, verbose=verbose)
                     
                     
     
-    def split_data(self, cell_line, hyper_tuning, sequence, test_size, validation_size):
+    def split_data(self, cell_line, hyper_tuning, sequence, test_size, validation_size, random_state):
         """Splits data into training and test set for model testing. Splits further the training
         set and discard the test set if used for hyperparameters tuning.
 
@@ -241,6 +211,8 @@ class Data_Prepare():
         sequence (bool): if the data passed are the genomic sequence.
         test_size (float): size of test set
         validation_size (float): size of validation set
+        random_state (int): initial random seed for dataset split.
+            Default: 123
 
         Returns
         ---------------
@@ -261,7 +233,7 @@ class Data_Prepare():
             self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(data_fa, 
                                                                                  self.labels_dict[cell_line],
                                                                                  test_size=test_size, 
-                                                                                 random_state=456, shuffle=True) 
+                                                                                 random_state=random_state, shuffle=True) 
 
             if hyper_tuning:
                 assert (self.X_train.shape[0] ==  len(self.y_train))
@@ -269,7 +241,7 @@ class Data_Prepare():
                 self.X_train, self.X_test,  self.y_train, self.y_test = train_test_split(self.X_train, 
                                                                                      self.y_train,
                                                                                      test_size=validation_size,
-                                                                                     random_state=123, shuffle=True) 
+                                                                                     random_state=random_state+100, shuffle=True) 
                    
             
         else:
@@ -278,7 +250,7 @@ class Data_Prepare():
             self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.data_dict[cell_line], 
                                                                                     self.labels_dict[cell_line],
                                                                                     test_size=test_size, 
-                                                                                    random_state=123, shuffle=True) 
+                                                                                    random_state=random_state, shuffle=True) 
             
             if hyper_tuning: 
                 assert (self.X_train.shape[0] ==  len(self.y_train))
@@ -286,10 +258,24 @@ class Data_Prepare():
                 self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X_train, 
                                                                                         self.y_train,
                                                                                         test_size=validation_size, 
-                                                                                        random_state=456, shuffle=True) 
+                                                                                        random_state=random_state+100, shuffle=True) 
+        self.X_train.reset_index(drop=True, inplace=True)
+        self.X_test.reset_index(drop=True, inplace=True)
+        self.y_train.reset_index(drop=True, inplace=True)
+        self.y_test.reset_index(drop=True, inplace=True)
+        
+        
         
     
-    def return_data(self, cell_line, hyper_tuning=False, sequence=False, test_size=0.25, validation_size=0.15):
+    def return_data(self, 
+                    cell_line, 
+                    hyper_tuning=False, 
+                    sequence=False, 
+                    random_state=123,
+                    test_size=0.25, 
+                    validation_size=0.15,
+                    augmentation=False):
+        
         """Splits data into training and test set for model testing. Splits further the training
         set and discard the test set if used for hyperparameters tuning.
 
@@ -301,27 +287,35 @@ class Data_Prepare():
             Default: False
         sequence (bool): if the data passed are the genomic sequence.
             Default: False
+        random_state (int): initial random seed for dataset split.
+            Default: 123
         test_size (float): size of test set
             Default: 0.25
         validation_size (float): size of validation set
             Default: 0.15
+        data_augmentation (bool): whether to apply or not data augmentation.
+            Default: False
 
         Returns
         ---------------
         Dataframes of Training set, Test set, training labels, test labels, index (info about sequence)
         """
         
-        if cell_line not in ['A549','GM12878', 'H1', 'HEK293', 'HEPG2', 'K562', 'MCF7']:
+        if cell_line not in CELL_LINES:
             raise ValueError(
-            "Argument 'cell_line' has an incorrect value: use 'A549', 'GM12878', 'H1', 'HEK293', 'HEPG2', 'K562', 'MCF7'")
+            f"Argument 'cell_line' has an incorrect value: use one among {CELL_LINES}")
             
-        self.split_data(cell_line=cell_line, hyper_tuning=hyper_tuning, sequence=sequence, test_size=test_size, validation_size=validation_size)
+        self.split_data(cell_line=cell_line, hyper_tuning=hyper_tuning, sequence=sequence, test_size=test_size, 
+                        validation_size=validation_size, random_state=random_state)
     
+        if augmentation:
+            self.X_train, self.y_train = data_augmentation(self.X_train, self.y_train, 
+                                                           sequence=sequence, threshold=0.15)
+            
 
-        return ( self.X_train.reset_index(drop=True), self.X_test.reset_index(drop=True), 
-                self.y_train.reset_index(drop=True) , self.y_test.reset_index(drop=True),
+        return ( self.X_train, self.X_test,
+                self.y_train, self.y_test,
                 self.index )                
-
 
                 
 
@@ -352,6 +346,8 @@ class Dataset_Wrap(Dataset):
         self.label_encoder = LabelEncoder().fit(np.array(['a','c','g','n','t']))
         # get rid of value 3 which is 'n' (nan)
         self.knn_imputer = KNNImputer(n_neighbors=self.n_neighbors)
+        # fit one-hot encoder
+        self.onehot_encoder = OneHotEncoder(sparse=False).fit(np.array([0,1,2,4]).reshape(-1, 1)) 
 
 
     def __len__(self):
@@ -364,13 +360,16 @@ class Dataset_Wrap(Dataset):
         
         if self.sequence:
             # all the letters in lowercase
-            data = [i for i in data.lower()]
+            data = list(data.lower()) # or [i for i in data.lower()] # original
             # apply encoding
             data = self.label_encoder.transform(data)
             # value 3 corresponds to n (nan)
             data = [np.nan if i ==3 else i for i in data]
             # impute missing data with knn
             data =  self.knn_imputer.fit_transform( np.array(data).reshape(-1,1) ).astype(int).round()
+
+            data = self.onehot_encoder.transform(np.array(data).reshape(-1, 1))
+            
             
         
         data = torch.tensor(data)
@@ -505,12 +504,12 @@ class Build_DataLoader_Pipeline():
             self.data_class = Data_Prepare(self.data_dict, self.labels_dict, n_neighbors=self.n_neighbors)
             self.data_class.transform()
             print('Data transformation Done!\n')
-            self.data_class.correlation_with_label(type_corr=self.type_corr, intersection=self.intersection, verbose=self.verbose)
-            print('Check correlation with labels Done!\n')
+       #     self.data_class.correlation_with_label(type_corr=self.type_corr, intersection=self.intersection, verbose=self.verbose)
+        #    print('Check correlation with labels Done!\n')
           #  self.data_class.correlation_btw_features(verbose=self.verbose)  
        #     print('Check correlation between features Done!\n')  
             
-            with open("data_prepare_class_{}".format(self.path_name), "wb") as fout:
+            with open(f"data_prepare_class_{self.path_name}", "wb") as fout:
                 pickle.dump(self.data_class, fout)
         
         print('Data Preprocessing Done!')
@@ -521,6 +520,8 @@ class Build_DataLoader_Pipeline():
                     cell_line, 
                     hyper_tuning=False, 
                     sequence=False,
+                    random_state=123,
+                    augmentation=False,
                     test_size=0.25, 
                     validation_size=0.15,
                     batch_size = 100):
@@ -547,8 +548,10 @@ class Build_DataLoader_Pipeline():
         X_train, X_test, y_train, y_test, index = self.data_class.return_data(cell_line=cell_line, 
                                                                           hyper_tuning=hyper_tuning, 
                                                                           sequence=sequence,
+                                                                          random_state=random_state,
                                                                           test_size=test_size,
-                                                                          validation_size=validation_size)
+                                                                          validation_size=validation_size,
+                                                                          augmentation=augmentation)
         
         self.index = index
         
@@ -557,7 +560,7 @@ class Build_DataLoader_Pipeline():
         
         loader_train = DataLoader(dataset = train_wrap, 
                                   batch_sampler = BalancePos_BatchSampler(train_wrap, batch_size= batch_size))
-        loader_test = DataLoader(dataset = test_wrap, 
-                                 batch_sampler = BalancePos_BatchSampler(test_wrap, batch_size= batch_size*2)) 
+        loader_test = DataLoader(dataset = test_wrap, batch_size= batch_size*2, shuffle=True)
 
         return  loader_train, loader_test
+
