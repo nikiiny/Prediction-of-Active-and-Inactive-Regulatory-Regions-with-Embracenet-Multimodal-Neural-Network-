@@ -6,13 +6,14 @@ import numpy as np
 from .utils import size_out_convolution
 
 
-class CNN_define_model(nn.Module):
+class CNN_LSTM_define_model(nn.Module):
 
     def __init__(self, trial, classes=2):
         super(CNN_define_model, self).__init__()
         self.trial = trial
         self.classes = classes
         self.CNN_model = []
+        self.LSTM_model = []
         
         maxpool_kernel_size=10
         stride=1
@@ -20,16 +21,14 @@ class CNN_define_model(nn.Module):
         input_size=256
         in_channels = 1
         
-        n_layers = trial.suggest_int("n_layers", 1, 3)
+        n_layers = trial.suggest_int("CNN_n_layers", 1, 2)
         layers = []
         
         for i in range(n_layers):
             if i==0:
-                out_channels = trial.suggest_categorical("out_channels_l{}".format(i), [16, 32, 64])
+                out_channels = trial.suggest_categorical("CNN_out_channels_l{}".format(i), [16, 32, 64])
             elif i==1:
-                out_channels = trial.suggest_categorical("out_channels_l{}".format(i), [32, 64, 96])
-            elif i==2:
-                out_channels = trial.suggest_categorical("out_channels_l{}".format(i), [64, 96, 128, 256])
+                out_channels = trial.suggest_categorical("CNN_out_channels_l{}".format(i), [32, 64, 96])
             
             kernel_size = trial.suggest_categorical("kernel_size_l{}".format(i), [5, 11, 15])
             padding = (kernel_size-1)/2 # same padding
@@ -52,26 +51,40 @@ class CNN_define_model(nn.Module):
             output_size = size_out_convolution(input_size, kernel_size, padding, stride)
             # for maxpool 
             output_size = size_out_convolution(output_size, maxpool_kernel_size, padding=0, maxpool_stride)
-            input_size=output_size
+            input_size=output_size # length of sequence after convolution
 
-        # out = out.reshape(out.size(0), -1) # batch_size, rest
-        
-        # to calculate the size of the FC layer:
-        # - calculate inpute size after each convolution
-        # - the input to FC layer is going to be num channels x length
-
+       
         self.CNN_model = nn.Sequential(*layers)
 
-        self.last_layer1 = nn.Linear(out_channels*self.fc_layer_size, 1000) 
+        
+        hidden_layer_size = trial.suggest_categorical("LSTM_hidden_layer_size", [32, 64, 128])
+        n_layers = trial.suggest_int("LSTM_n_layers", 1,2)
+
+        
+        # calcola output cnn come prima. lunghezza sequenza è seq_len
+        
+        self.LSTM_model = nn.LSTM(4, hidden_layer_size, n_layers, batch_first=True) 
+        
+        self.seq_len = output_size(0)
+        
         self.last_layer2 = nn.Linear(1000, 64) 
         self.last_output = nn.Linear(64, self.classes) 
+
+        
     
     def forward(self, x):
-
+        
         out = self.CNN_model(x)
-        out = out.reshape(out.size(0), -1) # batch_size, rest
-        out = self.last_layer1(out)
+        out = out.reshape(out.size(0),out.size(1), -1) # batch, timesteps, rest
+        out, _ = self.LSTM_model(out)
+        out = out.reshape(out.size(0),-1) # batch_size, rest
+        out = nn.Linear(len(out), 1000)(out)
         out = self.last_layer2(out)
         out = self.last_output(out)
-
+    
+        # INPUT SIZE of LSTM: n_features
+        # INPUT of LSTM: batch_size, seq_len, input_size (100, 256, 4) #?
+        # OUTPUT HAS SHAPE (batch_size, seq_len, hidden_dim)
+        # seq len è l output del cnn
+        
         return out

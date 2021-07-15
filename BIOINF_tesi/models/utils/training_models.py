@@ -335,7 +335,11 @@ class Param_Search():
         for key, value in trial.params.items():
             print("    {}: {}".format(key, value))
 
-    
+        self.best_params = trial.params
+
+    def get_best_params(self):
+        return self.best_params
+
     
     def save_best_model(self, path):
         """Saves the weights of the common layers of the best performing model.

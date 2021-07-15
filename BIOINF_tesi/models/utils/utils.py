@@ -114,7 +114,7 @@ def save_best_model(model, path):
 
 
 
-def plot_model_scores(y_train, y_test, epochs, set_ylim=None):
+def plot_model_scores(y_train, y_test, set_ylim=None):
     """Plots the trend of the training and test loss function of 
         a model.
     
@@ -122,12 +122,11 @@ def plot_model_scores(y_train, y_test, epochs, set_ylim=None):
     ------------------
     y_train (list): list of training losses.
     y_test (list): list of test losses.
-    epochs (int): number of epochs.
     set_ylim (tuple of int): range of y-axis.
         Default: None
     """
    
-    epochs = range(epochs)
+    epochs = range(len(y_train))
     X=pd.DataFrame({'epochs':epochs,'y_train':y_train,'y_test':y_test})
    
     sns.set_theme(style="darkgrid")
