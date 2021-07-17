@@ -7,10 +7,9 @@ import numpy as np
 
 class FFNN_define_model(nn.Module):
 
-    def __init__(self, trial, in_features_INPUT, classes=2):
+    def __init__(self, trial, in_features, classes=2):
         super(FFNN_define_model, self).__init__()
         self.trial = trial
-        self.in_features_INPUT = in_features_INPUT
         self.classes = classes
         self.model = []
         
@@ -18,7 +17,6 @@ class FFNN_define_model(nn.Module):
         n_layers = self.trial.suggest_int("n_layers", 1, 3)
         layers = []
 
-        in_features = self.in_features_INPUT
         for i in range(n_layers):
             if i==0:
                 out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [4, 16, 32, 64, 128, 256])

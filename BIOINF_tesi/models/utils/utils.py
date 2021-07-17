@@ -6,8 +6,9 @@ import matplotlib.pylab as plt
 import os
 import pickle
 from tqdm.auto import tqdm
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, precision_score, recall_score, average_precision_score
 import re
+from collections import defaultdict
 
 import torch
 import torch.nn.functional as F
@@ -104,17 +105,16 @@ def save_best_model(model, path):
       if re.findall('last', key):
         del model_param[str(key)]
 
-    gdrive_path = '/content/gdrive/MyDrive/Thesis_BIOINF' ###
     basepath = 'models'
-    basepath = gdrive_path + basepath ###
-    PATH = os.path.join(basepath, path)
+    basepath = basepath 
+    PATH = os.path.join(basepath, path + '.pt')
     
     torch.save(model_param, PATH)
 
 
 
 
-def plot_model_scores(y_train, y_test, set_ylim=None):
+def plot_F1_scores(y_train, y_test, set_ylim=None):
     """Plots the trend of the training and test loss function of 
         a model.
     
@@ -134,8 +134,8 @@ def plot_model_scores(y_train, y_test, set_ylim=None):
 
     f, ax = plt.subplots(1, 1)
 
-    sns.lineplot(data=X, x="epochs", y="y_test", color='red',lw=2.5)
-    sns.lineplot(data=X, x="epochs", y="y_train", color='green',lw=2.5)
+    sns.lineplot(data=X, x="epochs", y="y_test", color='#dc143c',lw=2.5)
+    sns.lineplot(data=X, x="epochs", y="y_train", color='#00bfff',lw=2.5)
 
     plt.legend(labels=['F1 test score', 'F1 train score'])
     plt.setp(ax.get_legend().get_texts(), fontsize=35)
@@ -147,20 +147,73 @@ def plot_model_scores(y_train, y_test, set_ylim=None):
     ax.tick_params(axis="x", labelsize=20)
     ax.set_ylim(set_ylim)
 
+    plt.show()
 
 
 
-def accuracy(y_hat, y):
-  pred = torch.argmax(y_hat, dim=1)
+def plot_other_scores(AUPRC_prec_rec, set_ylim=None):
+    """Plots the trend of the training and test loss function of 
+        a model.
+    
+    Parameters:
+    ------------------
+    y_train (list): list of training losses.
+    y_test (list): list of test losses.
+    set_ylim (tuple of int): range of y-axis.
+        Default: None
+    """
+   
+
+    AUPRC, precision, recall = AUPRC_prec_rec
+    epochs = range(len(AUPRC))
+    X=pd.DataFrame({'epochs':epochs,'AUPRC':AUPRC,'Precision':precision,'Recall':recall})
+   
+    sns.set_theme(style="darkgrid")
+    sns.set(rc={'figure.figsize':(30,15)})
+
+    f, ax = plt.subplots(1, 1)
+
+    sns.lineplot(data=X, x="epochs", y="AUPRC", color='#00ced1',lw=2.5)
+    sns.lineplot(data=X, x="epochs", y="Precision", color='#ff1493',lw=2.5)
+    sns.lineplot(data=X, x="epochs", y="Recall", color='#7b68ee',lw=2.5)
+
+    plt.legend(labels=['AUPRC', 'Precision', 'Recall'])
+    plt.setp(ax.get_legend().get_texts(), fontsize=35)
+    plt.setp(ax.get_legend().get_title(),fontsize=35)
+
+    ax.set_ylabel('Scores', fontsize=30)
+    ax.set_xlabel('Epochs', fontsize=30)
+    ax.tick_params(axis="y", labelsize=20)
+    ax.tick_params(axis="x", labelsize=20)
+    ax.set_ylim(set_ylim)
+
+    plt.show()
+
+
+def accuracy(output, target):
+  pred = torch.argmax(output, dim=1)
   # return the category with the highest probability
-  return (pred == y).float().mean()
+  return (pred == target).float().mean()
   # return true if the predicted category is equal to the true one, false otherwise.
   #we transform them in float, 1 if True, 0 is False, then we return the mean of the vector
 
 
-def F1(output, target):
+def F1(output, target, average='binary'):
   pred = torch.argmax(output, dim=1)
-  return f1_score(pred.cpu().detach().numpy(), target.cpu().detach().numpy(), average='weighted')
+  return f1_score(target.cpu().detach().numpy(), pred.cpu().detach().numpy(), average=average)
+
+
+
+def AUPRC_precision_recall(output, target, average='binary'):
+    pred = torch.argmax(output, dim=1).cpu().detach().numpy()
+    target = target.cpu().detach().numpy()
+    
+    AUPRC = average_precision_score(target, pred, average=average)
+    precision = precision_score(target, pred, average=average)
+    recall = recall_score(target, pred, average=average)
+    
+    return (AUPRC, precision, recall)
+
 
 
 def get_loss_weights_from_dataloader(dataloader):
@@ -170,7 +223,7 @@ def get_loss_weights_from_dataloader(dataloader):
     """
     pos=0
     tot=0
-    for i,j in tqdm(dataloader):
+    for i,j in dataloader:
         pos+=j.sum()
         tot+=len(j)
     neg=tot-pos
@@ -181,7 +234,33 @@ def get_loss_weights_from_dataloader(dataloader):
     return pos_inv/(neg_inv+pos_inv), neg_inv/(neg_inv+pos_inv)
 
 
+def get_loss_weights_from_labels(label):
+    """
+    Returns normalized weights of positive and negative class according
+    to Inverse Number of Samples (INS) from Series of labels.
+    """
+    pos = len(label[label==1])
+    neg = len(label[label==0])
+    
+    pos_inv = 1/pos
+    neg_inv = 1/neg
+    
+    return pos_inv/(neg_inv+pos_inv), neg_inv/(neg_inv+pos_inv)
+
+
+
+
 def size_out_convolution(input_size, kernel, padding, stride):
     """Calculates and returns the size of input after a convolution"""
     return int(( (input_size + 2*padding - kernel)/stride )+1)
+
+def weight_reset(x):
+    if isinstance(x, nn.Conv1d) or isinstance(x, nn.Linear) or isinstance(x, nn.LSTM):
+        x.reset_parameters()
+
+def get_input_size(data_loader):
+  for d,l in data_loader:
+    input_size = d.shape[1]
+    break
+  return input_size
 

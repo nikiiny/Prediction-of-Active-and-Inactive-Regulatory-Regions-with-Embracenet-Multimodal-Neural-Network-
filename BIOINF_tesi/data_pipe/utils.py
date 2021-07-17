@@ -11,7 +11,7 @@ from imblearn.over_sampling import SMOTE
 
 
 TYPE_TEST = ['wilcoxon_test','kruskal_wallis_test']
-
+TYPE_AUGM_GENFEATURES = ['smote', 'double']
     
 def kruskal_wallis_test(X, y, kruskal_pval_threshold = 0.05,verbose=False):
     """The Kruskal–Wallis test by ranks, or one-way ANOVA on ranks, is a non-parametric method 
@@ -252,8 +252,7 @@ def reverse_strand(sequence):
     return ''.join(sequence)
 
 
-
-def reverse_strand_augment(X,y):
+def double_augment(X, y, threshold, imbalance, random_state):
     """
     Augment data and labels by adding complementary strands.
 
@@ -261,47 +260,101 @@ def reverse_strand_augment(X,y):
     --------------
     X (pd.DataFrame): data about genomic sequences.
     y (pd.Seres): binary labels.
+    imbalance: current level of imbalance as ratio.
+    threshold: desired level of imbalance as ratio.
     """
     
     pos_index = y[y==1].index
-    pos_X = X.iloc[pos_index]
-            
-    X = pos_X.apply(lambda x: reverse_strand(x))
-    y = pd.Series([1]*len(pos_index))
-            
+    X_ = X.iloc[pos_index]
+    X_.reset_index(drop=True, inplace=True)
+    y_ = pd.Series([1]*len(pos_index))
+
+    np.random.seed(random_state)
+    index = np.random.randint(0, len(X_), int( len(X_)*(threshold-imbalance)/imbalance ))
+    X = X.append(X_.iloc[index])
+    y = y.append(y_.iloc[index])
+
     assert (len(X) == len(y))
     
-    return X,y
+    return X.reset_index(drop=True), y.reset_index(drop=True)
 
 
 
-def data_augmentation(X, y, sequence, threshold=0.15):
+def reverse_strand_augment(X, y, threshold, imbalance, random_state):
+    """
+    Augment data and labels by adding complementary strands.
+
+    Parameters
+    --------------
+    X (pd.DataFrame): data about genomic sequences.
+    y (pd.Seres): binary labels.
+    imbalance: current level of imbalance as ratio.
+    threshold: desired level of imbalance as ratio.
+    """
+    
+    pos_index = y[y==1].index
+    X_ = X.iloc[pos_index]
+            
+    X_ = X_.apply(lambda x: reverse_strand(x))
+    X_.reset_index(drop=True, inplace=True)
+    y_ = pd.Series([1]*len(pos_index))
+    
+    np.random.seed(random_state)
+    index = np.random.randint(0, len(X_), int( len(X_)*(threshold-imbalance)/imbalance ))
+    X = X.append(X_.iloc[index])
+    y = y.append(y_.iloc[index])
+
+    assert (len(X) == len(y))
+    
+    return X.reset_index(drop=True), y.reset_index(drop=True)
+
+
+
+
+def data_augmentation(X, y, sequence=False, type_augm_genfeatures='smote', 
+                        threshold=0.15, random_state=123):
     """
     Performs data augmentation. ........ comment
     
     Attributes:
-    X (pd.Series):
-    y (pd.Series)
+    X (pd.DataFrame): data.
+    y (pd.Seres): labels.
+    sequence (bool): if the data is a genomic sequence or not.
+        Default: False
+    type_augm_genfeatures: when the data are the epigenomic features,
+        what kind of augmentation to apply. Possible choices are
+        'smote' and 'double'.
+        Default: 'smote'
+    threshold: desired level of imbalance as ratio.
+        Default: 0.15
+    random_state (int): initial random seed.
+        Default: 123
+
     """
     
+    TYPE_AUGM_GENFEATURES
+
+    if type_augm_genfeatures not in TYPE_AUGM_GENFEATURES:
+                raise ValueError(
+                f"Argument 'type_augm_genfeatures' has an incorrect value: use one among {TYPE_AUGM_GENFEATURES}")
+
+
     imbalance = get_imbalance(y)
     if imbalance <= threshold:
         
         if sequence:
-            X_aug, y_aug = reverse_strand_augment(X,y)
-            
-            index = np.random.randint(0, len(X_aug), int( len(X_aug)*(threshold-imbalance)/imbalance ))
-            
-            X = X.append(X_aug.iloc[index])
-            y = y.append(y_aug.iloc[index])
-            
-            return X.reset_index(drop=True), y.reset_index(drop=True)
+            X,y = reverse_strand_augment(X, y, threshold, imbalance, random_state)
+            return X,y
         
         else:
-            oversample_SMOTE = SMOTE(k_neighbors=3, sampling_strategy = threshold)
-            X, y = oversample_SMOTE.fit_resample(X, y.ravel())
-            
-            return X.reset_index(drop=True), pd.Series(y)
+            if type_augm_genfeatures == 'smote':
+                oversample_SMOTE = SMOTE(k_neighbors=3, sampling_strategy = threshold)
+                X, y = oversample_SMOTE.fit_resample(X, y.ravel())
+                return X.reset_index(drop=True), pd.Series(y)
+
+            elif type_augm_genfeatures == 'double':
+                X,y = double_augment(X, y, threshold, imbalance, random_state)
+                return X, y
     
     else:
         return X, y

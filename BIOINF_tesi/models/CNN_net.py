@@ -18,7 +18,7 @@ class CNN_define_model(nn.Module):
         stride=1
         maxpool_stride=2
         input_size=256
-        in_channels = 1
+        in_channels = 4
         
         n_layers = trial.suggest_int("n_layers", 1, 3)
         layers = []
@@ -32,7 +32,7 @@ class CNN_define_model(nn.Module):
                 out_channels = trial.suggest_categorical("out_channels_l{}".format(i), [64, 96, 128, 256])
             
             kernel_size = trial.suggest_categorical("kernel_size_l{}".format(i), [5, 11, 15])
-            padding = (kernel_size-1)/2 # same padding
+            padding = int((kernel_size-1)/2) # same padding
             layers.append( nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, 
                                      padding=padding )) 
             layers.append( nn.BatchNorm1d(out_channels) )
@@ -51,7 +51,7 @@ class CNN_define_model(nn.Module):
             # for convolution 
             output_size = size_out_convolution(input_size, kernel_size, padding, stride)
             # for maxpool 
-            output_size = size_out_convolution(output_size, maxpool_kernel_size, padding=0, maxpool_stride)
+            output_size = size_out_convolution(output_size, maxpool_kernel_size, 0, maxpool_stride)
             input_size=output_size
 
         # out = out.reshape(out.size(0), -1) # batch_size, rest
@@ -62,7 +62,7 @@ class CNN_define_model(nn.Module):
 
         self.CNN_model = nn.Sequential(*layers)
 
-        self.last_layer1 = nn.Linear(out_channels*self.fc_layer_size, 1000) 
+        self.last_layer1 = nn.Linear(out_channels*output_size, 1000) 
         self.last_layer2 = nn.Linear(1000, 64) 
         self.last_output = nn.Linear(64, self.classes) 
     

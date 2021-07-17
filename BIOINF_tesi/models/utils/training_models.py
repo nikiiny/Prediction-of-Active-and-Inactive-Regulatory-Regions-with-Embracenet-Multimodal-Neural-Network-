@@ -1,10 +1,13 @@
 import pandas as pd
 import numpy as np
 import os
+import re
 import pickle
 from tqdm.auto import tqdm
 import sqlite3
 from sqlalchemy import create_engine
+from collections import defaultdict
+import copy
 
 import torch
 import torch.nn.functional as F
@@ -15,7 +18,12 @@ import optuna
 import botorch
 from optuna.integration import BoTorchSampler
 
-from .utils import EarlyStopping, accuracy, F1
+from .utils import (EarlyStopping, accuracy, F1, AUPRC_precision_recall, size_out_convolution, 
+    weight_reset, get_loss_weights_from_dataloader, get_input_size, plot_other_scores, 
+    plot_F1_scores)
+from BIOINF_tesi.data_pipe.utils import data_augmentation
+from BIOINF_tesi.data_pipe.dataprepare import Data_Prepare, Dataset_Wrap, BalancePos_BatchSampler
+
 
 
 def fit(model, 
@@ -24,13 +32,11 @@ def fit(model,
         criterion, 
         optimizer=None, 
         num_epochs=50,
-        filename_path=None, 
         patience=3,
-        sequence=False,
         delta=0,
         verbose=True): 
     
-  """Performs the training of the model. It implements also early stopping
+    """Performs the training of the model. It implements also early stopping
     
     Parameters:
     ------------------
@@ -40,8 +46,6 @@ def fit(model,
     criterion: loss function for training the model.
     optimizer (torch.optim): optimization algorithm for training the model. 
     num_epochs (int): number of epochs.
-    filename_path (str): where the weights of the model at each epoch will be stored. 
-        Indicate only the name of the folder.
     patience (int): number of epochs in which the test error is not anymore decreasing
         before stopping the training.
     delta (int): minimum decrease in the test error to continue with the training.
@@ -61,15 +65,12 @@ def fit(model,
     Prints training error, test error, F1 training score, F1 test score at each epoch.
     """
 
-   # gdrive_path = '/content/gdrive/MyDrive/Thesis_BIOINF' ###
     basepath = 'exp'
-   #basepath = gdrive_path + basepath ###
-
-
 
     # keep track of epoch losses 
     f1_train_scores = []
     f1_test_scores = []
+    AUPRC_precision_recall_test_scores = []
 
     # convert model data type to double
     model = model.double()
@@ -84,31 +85,21 @@ def fit(model,
         
         f1_train = 0.0
         f1_test = 0.0
+        AUPRC_precision_recall_test = 0.0
 
     
-        # if there is already a trained model stored for a specific epoch, load the model
-        #and don't retrain the model
-        if os.path.exists( os.path.join(basepath, filename_path + '_' + str(epoch) + '.pt') ):
-            
-            checkpoint = torch.load(PATH)
-            model.load_state_dict(checkpoint['model_state_dict'])
-            f1_train = checkpoint['F1_train']
-            f1_test = checkpoint['F1_test']
-            train_loss = checkpoint['train_loss']
-            test_loss = checkpoint['test_loss']
-    
-        else:
-        # set the model in training modality
+    # set the model in training modality
         model.train()
 
-        for data, target in tqdm(train_loader, desc='Training model'):
+        for data, target in train_loader:
         
+            target = target.reshape(-1)
             # clear the gradients of all optimized variables
             optimizer.zero_grad()
             # forward pass: compute predicted outputs by passing inputs to the model
             output = model(data.double())
             # calculate the batch loss as the sum of all the losses
-            loss = criterion(output, target) 
+            loss = criterion.double()(output.float(), target.squeeze()) 
             # backward pass: compute gradient of the loss wrt model parameters
             loss.backward()
             # perform a single optimization step (parameter update)
@@ -121,36 +112,27 @@ def fit(model,
         
         # set the model in testing modality
         model.eval()
-        for data, target in tqdm(test_loader, desc='Testing model'):
+        for data, target in test_loader:
 
             # forward pass: compute predicted outputs by passing inputs to the model
             output = model(data.double())
             # calculate the batch loss as the sum of all the losses
-            loss = criterion(output, target)
+            loss = criterion.double()(output.float(), target.squeeze())
             # update test loss
             test_loss += loss.item()
             # calculate F1 test score as a weighted sum of the single F1 scores
             f1_test += F1(output,target) 
+            AUPRC_precision_recall_test += AUPRC_precision_recall(output,target)
         
-    
-    
-        # save the model weights, epoch, scores and losses at each epoch
-        model_param = model.state_dict()
-        PATH = os.path.join(basepath, filename_path + '_' + str(epoch) + '.pt')
-        torch.save({'epoch': epoch,
-                        'model_state_dict': model_param,
-                        'F1_train': f1_train,
-                        'F1_test': f1_test,
-                        'train_loss': train_loss,
-                        'test_loss': test_loss},
-                       PATH)
     
         # calculate epoch score by dividing by the number of observations
         f1_train /= (len(train_loader))
         f1_test /= (len(test_loader))
+        AUPRC_precision_recall_test /= (len(test_loader))
         # store epoch score
         f1_train_scores.append(f1_train)    
         f1_test_scores.append(f1_test)
+        AUPRC_precision_recall_test_scores.append(AUPRC_precision_recall_test)
           
         # print training/test statistics 
         if verbose == True:
@@ -163,14 +145,11 @@ def fit(model,
         early_stopping(test_loss, model)
         if early_stopping.early_stop:
             print('Early stopping the training')
-            # reload the previous best model before the test loss started decreasing
-            best_checkpoint = torch.load(os.path.join(basepath,filename_path + '_' + '{}'.format(epoch-patience) + '.pt'))
-            model.load_state_dict(best_checkpoint['model_state_dict'])
             break
 
   
-    # return the scores at each epoch
-    return f1_train_scores, f1_test_scores
+    # return the scores at each epoch + the AUPRC, precision and recall
+    return f1_train_scores, f1_test_scores, AUPRC_precision_recall_test_scores
 
 
 
@@ -202,26 +181,28 @@ class Param_Search():
     """
 
     def __init__(self, 
-               # network_type,
                model,
                train_loader, 
                test_loader,
                criterion,
                num_epochs,
                study_name,
-               input_size,
                n_trials=4
                ):
-        # self.network_type = network_type
-        self.model = model
+        self.model_ = copy.deepcopy(model)
         self.train_loader = train_loader
         self.test_loader = test_loader
         self.criterion = criterion
         self.num_epochs = num_epochs
         self.study_name = study_name
-        self.sequence = sequence
         self.n_trials = n_trials
         self.best_model = None
+
+
+        # generate the model
+        # FFNN needs also the shape of the input as parameter, 
+        # while CNN don't
+        self.model_name = model.__name__
     
 
     def objective(self, trial):
@@ -229,17 +210,19 @@ class Param_Search():
         each final model.
         """
 
-        # generate the model
-        # model = FFNN_define_model(trial, in_features_INPUT=self.input_size, classes=2)
-        self.model = model
+        if self.model_name.startswith('FFNN'):
+            input_size = get_input_size(self.train_loader)
+            self.model = self.model_(trial, in_features=input_size)
+        else:
+            self.model = self.model_(trial)
 
         # generate the possible optimizers
         optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "RMSprop"])
         lr = trial.suggest_loguniform("lr", 1e-5, 1e-1)
-        optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=lr)
+        optimizer = getattr(optim, optimizer_name)(self.model.parameters(), lr=lr)
 
         # convert model data type to double
-        model = model.double()
+        self.model = self.model.double()
 
         
         # Define the training and testing phases
@@ -249,16 +232,19 @@ class Param_Search():
             f1_test = 0.0
 
             # set the model in training modality
-            model.train()
-            for data, target in tqdm(self.train_loader, desc='Training Model'):
+            self.model.train()
+            for data, target in self.train_loader:
                 
-
+                #target = target.reshape(-1,1)
                 # clear the gradients of all optimized variables
                 optimizer.zero_grad()
                 # forward pass: compute predicted outputs by passing inputs to the model
-                output = model(data.double())
+                output = self.model(data.double())
                 # calculate the batch loss as a sum of the single losses
-                loss = self.criterion(output, target) 
+                try:
+                    loss = self.criterion.double()(output.float(), target.squeeze()) 
+                except:
+                    loss = self.criterion.float()(output.float(), target.squeeze()) 
                 # backward pass: compute gradient of the loss wrt model parameters
                 loss.backward()
                 # perform a single optimization step (parameter update)
@@ -267,17 +253,21 @@ class Param_Search():
                 train_loss += loss.item()
             
             # set the model in testing modality
-            model.eval()
-            for data, target in tqdm(self.test_loader, desc='Testing Model'):  
+            self.model.eval()
+            for data, target in self.test_loader:  
 
                 # forward pass: compute predicted outputs by passing inputs to the model
-                output = model(data.double())
+                output = self.model(data.double())
                 # calculate the batch loss as a sum of the single losses
-                loss = self.criterion(output, target)
+                try:
+                    loss = self.criterion.double()(output.float(), target.squeeze()) 
+                except:
+                    loss = self.criterion.float()(output.float(), target.squeeze()) 
                 # update test loss 
                 test_loss += loss.item()
                 # calculate F1 test score as weighted sum of the single F1 scores
                 f1_test += F1(output,target)
+                
 
               # calculate epoch score by dividing by the number of observations
             f1_test /= (len(self.test_loader))
@@ -287,7 +277,7 @@ class Param_Search():
 
         # save the final model named with the number of the trial 
         with open("{}{}.pickle".format(self.study_name, trial.number), "wb") as fout:
-            pickle.dump(model, fout)
+            pickle.dump(self.model, fout)
         
         # return F1 score to the study
         return f1_test
@@ -299,7 +289,7 @@ class Param_Search():
         
         # create a new study or load a pre-existing study. use sqlite backend to store the study.
         study = optuna.create_study(study_name=self.study_name, direction="maximize", 
-                                   # storage='sqlite:///SA_optuna_tuning.db', load_if_exists=True,
+                                    storage='sqlite:///SA_optuna_tuning.db', load_if_exists=True,
                                     sampler=BoTorchSampler())
         
         complete_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.COMPLETE]
@@ -336,9 +326,7 @@ class Param_Search():
             print("    {}: {}".format(key, value))
 
         self.best_params = trial.params
-
-    def get_best_params(self):
-        return self.best_params
+        self.trial_value = trial.value
 
     
     def save_best_model(self, path):
@@ -361,11 +349,188 @@ class Param_Search():
             if re.findall('last', key):
                 del model_param[str(key)]
 
-      #  gdrive_path = '/content/gdrive/MyDrive/Thesis_BIOINF' ###
         basepath = 'models' 
-       # basepath = grive_path + basepath ###
-        path = os.path.join(basepath, path)
+        path = os.path.join(basepath, path + '.pt')
 
         torch.save(model_param, path)
 
         return model_param
+
+
+
+
+class Kfold_CV():
+    """Performs repeated holdout.
+    Used for comparing different types of models and with and without augmentation"""
+    
+    def __init__(self):
+        
+        self.scores_dict = defaultdict(lambda:defaultdict(list))
+        self.model_ = []
+        self.optimizer = []
+    
+    
+    def build_dataloader_forCV(self, X, y, sequence, batch_size, training=True,
+                        augmentation=True, n_neighbors=5):
+
+        if isinstance(X, list):
+            for x_ in X:
+                x_.reset_index(drop=True, inplace=True)
+            for y_ in y:
+                y_.reset_index(drop=True, inplace=True)
+            
+            X = pd.concat([x_ for x_ in X])
+            y = pd.concat([y_ for y_ in y])
+            
+            
+        else:
+            X.reset_index(drop=True, inplace=True), y.reset_index(drop=True, inplace=True)
+
+        if training and augmentation:
+            X, y = data_augmentation(X, y, sequence=sequence, threshold=0.15)
+        wrap = Dataset_Wrap(X, y, sequence=sequence, n_neighbors=n_neighbors)
+        
+        if training:    
+            return DataLoader(dataset = wrap, 
+                       batch_sampler = BalancePos_BatchSampler(wrap, batch_size= batch_size))
+        else:
+            return DataLoader(dataset = wrap, batch_size= batch_size*2, shuffle=True)
+        
+        
+        
+    def hyper_tuning(self, train_loader, test_loader, num_epochs,
+                     study_name, hp_model_path):
+            
+            param_search = Param_Search(model=self.model_, train_loader=train_loader, 
+                                        test_loader=test_loader, criterion=self.criterion, 
+                                        num_epochs=num_epochs,
+                                        n_trials=3, study_name=study_name) #change to 5
+
+            param_search.run_trial()
+            # retrieve the best trained parameters
+            best_params = param_search.best_params
+            
+            # retrieve the best model
+            self.model_ = param_search.best_model
+            # reset weights
+            self.model_.apply(weight_reset)
+
+            lr = best_params['lr']
+            if best_params['optimizer'] == 'Adam':
+                self.optimizer = optim.Adam(self.model_.parameters(), lr=lr)
+            elif best_params['optimizer'] == 'RMSprop':
+                self.optimizer = optim.RMSprop(self.model_.parameters(), lr=lr)
+                
+            # save the params of the best hp tuning model (for loading in embracenet)
+            self.hp_score.append(param_search.trial_value)
+            if param_search.trial_value == max(self.hp_score):
+                param_search.save_best_model(hp_model_path) 
+    
+    
+    def model_testing(self, train_loader, test_loader, num_epochs,
+                      test_model_path, n_of_iterarion):
+        
+        F1_train, F1_test, other_scores = fit(model=self.model_, train_loader=train_loader, 
+                                    test_loader=test_loader, criterion=self.criterion, 
+                                    optimizer=self.optimizer, num_epochs=num_epochs, 
+                                    patience=3, verbose=False)
+            
+        self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'F1_train'] = F1_train
+        self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'F1_test'] = F1_test
+        self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_precision_recall'] = other_scores
+            
+        print(f'F1 test score: {F1_test[-1]}\n\n')
+        print(f'AUPRC: {other_scores[0]}, Precision: {other_scores[1]}, Recall: {other_scores[2]}')
+            
+        # save the params of the best testing model (for loading in embracenet)
+        self.avg_score.append(F1_test[-1])
+        if F1_test[-1] == max(self.avg_score):
+                save_best_model(self.model_, test_model_path) 
+    
+    
+    
+    def run(self,
+            build_dataloader_pipeline, 
+            cell_line, 
+            sequence=False, 
+            model=None,
+            augmentation=False,
+            random_state=123,
+            n_folds=3,
+            num_epochs=50, 
+            batch_size=100,
+            study_name=None,
+            hp_model_path=None, #ex: FFNN/best_model_FFNN_hp
+            test_model_path=None # ex: FNN/best_model_FFNN_test
+            ):
+        
+        self.n_folds = n_folds
+    
+        self.avg_score = []
+        self.hp_score = []
+        
+        data_class = build_dataloader_pipeline.data_class
+        kf, X, y = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=sequence,
+                                                      n_folds=n_folds, random_state=random_state)
+        
+        w_pos,w_neg = get_loss_weights_from_labels(y)
+        self.criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_pos,w_neg]))
+            
+        
+        i=1
+        for train_index, test_index in kf.split(X):
+            
+            print(f'>>> ITERATION N. {i}')
+            i+=1
+            
+            X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+            y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+            
+            X_train, X_val, y_train, y_val = train_test_split(X_train, y_train,
+                                                              test_size=1/self.n_folds,
+                                                              random_state=random_state, shuffle=True) 
+            self.model_ = model
+            
+            print('\n===============> HYPERPARAMETERS TUNING')
+            
+            train_loader = self.build_dataloader_forCV(X_train, y_train, sequence=sequence, 
+                                               batch_size=batch_size, training=True,
+                                               augmentation=augmentation)
+            test_loader = self.build_dataloader_forCV(X_val, y_val, sequence=sequence, 
+                                               batch_size=batch_size, training=False,
+                                               augmentation=augmentation)
+            
+            self.hyper_tuning(train_loader, test_loader, num_epochs,
+                              study_name, hp_model_path)
+            
+            
+            print('\n===============> MODEL TESTING')
+            
+            train_loader = self.build_dataloader_forCV([X_train, X_val], [y_train, y_val], sequence=sequence, 
+                                               batch_size=batch_size, training=True,
+                                               augmentation=augmentation)
+            test_loader = self.build_dataloader_forCV(X_test, y_test, sequence=sequence, 
+                                               batch_size=batch_size, training=False,
+                                               augmentation=augmentation)
+            
+            self.model_testing(train_loader, test_loader, num_epochs,
+                               test_model_path, i)
+                
+        
+        print(f'\n{n_folds}-FOLD CROSS-VALIDATION F1 TEST SCORE: {np.round(sum(self.avg_score)/n_folds, 5)}')
+            
+    
+    def plot_results(self):
+        
+        for i in self.n_folds:
+            print(f'ITERATION N. {i}')
+            plot_F1_scores(self.scores_dict[f'trial_n_{i}'][f'F1_train'],
+                              self.scores_dict[f'trial_n_{i}'][f'F1_test'])
+            
+            
+            plot_other_scores(self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_precision_recall'])
+    
+    
+
+
+    

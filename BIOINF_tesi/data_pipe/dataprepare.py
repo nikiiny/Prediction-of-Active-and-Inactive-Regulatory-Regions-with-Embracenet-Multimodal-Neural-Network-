@@ -13,7 +13,7 @@ from sklearn.impute import KNNImputer
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, Sampler
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from collections import OrderedDict, defaultdict
 
 from .utils import (kruskal_wallis_test, wilcoxon_test, spearman_corr, remove_correlated_features,
@@ -23,6 +23,8 @@ from .utils import (kruskal_wallis_test, wilcoxon_test, spearman_corr, remove_co
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 CELL_LINES = ['A549','GM12878', 'H1', 'HEK293', 'HEPG2', 'K562', 'MCF7']
+
+g_gpu = torch.Generator(device)
 
 
 class Data_Prepare():
@@ -264,13 +266,43 @@ class Data_Prepare():
         self.y_train.reset_index(drop=True, inplace=True)
         self.y_test.reset_index(drop=True, inplace=True)
         
-        
-        
     
+    def return_index_data_for_cv(self,
+                                cell_line,
+                                sequence=False,
+                                n_folds=3,
+                                random_state=123):
+        
+        if cell_line not in CELL_LINES:
+            raise ValueError(
+            f"Argument 'cell_line' has an incorrect value: use one among {CELL_LINES}")
+
+        kf = KFold(n_splits=n_folds, shuffle=True, random_state=random_state)
+
+
+        if sequence:
+            # if the task is active_E_vs_active_P or inactive_E_vs_inactive_P we need to select
+            #the observations in fa corresponding to the labels index of the cell line
+            if 'index_fa' in self.labels_dict:
+                index_cell_line = self.labels_dict['index_fa'][cell_line]
+                data_fa = self.data_dict['fa'].iloc[index_cell_line].reset_index(drop=True)
+            else:
+                data_fa = self.data_dict['fa']    
+            assert (data_fa.shape[0] ==  len(self.labels_dict[cell_line]))
+
+            return kf, data_fa.copy(), self.labels_dict[cell_line].copy()
+
+        else:
+
+            return kf, self.data_dict[cell_line].copy(), self.labels_dict[cell_line].copy()
+
+
+
+
     def return_data(self, 
                     cell_line, 
                     hyper_tuning=False, 
-                    sequence=False, 
+                    sequence=False,
                     random_state=123,
                     test_size=0.25, 
                     validation_size=0.15,
@@ -311,11 +343,9 @@ class Data_Prepare():
         if augmentation:
             self.X_train, self.y_train = data_augmentation(self.X_train, self.y_train, 
                                                            sequence=sequence, threshold=0.15)
-            
 
         return ( self.X_train, self.X_test,
-                self.y_train, self.y_test,
-                self.index )                
+                self.y_train, self.y_test)              
 
                 
 
@@ -369,10 +399,12 @@ class Dataset_Wrap(Dataset):
             data =  self.knn_imputer.fit_transform( np.array(data).reshape(-1,1) ).astype(int).round()
 
             data = self.onehot_encoder.transform(np.array(data).reshape(-1, 1))
+            data = data.T
             
-            
-        
         data = torch.tensor(data)
+
+        if isinstance(self.y, pd.Series):
+            self.y = np.array(self.y)
         label = torch.tensor([self.y[i].astype(int)]).reshape(-1)
 
         return data.to(device), label.to(device)
@@ -385,7 +417,7 @@ class BalancePos_BatchSampler(Sampler):
     """Sampler that evenly distributes positive observations among
     all batches.
     """
-    def __init__(self, dataset, batch_size):
+    def __init__(self, dataset, batch_size, random_state=123):
         
         self.pos_index = dataset.pos_index
         self.neg_index = dataset.neg_index
@@ -398,6 +430,7 @@ class BalancePos_BatchSampler(Sampler):
             self.n_batches = len(dataset) // self.batch_size
     
     def __iter__(self):
+        random.seed(random_state)
         random.shuffle(self.pos_index)
         random.shuffle(self.neg_index)
         
@@ -504,10 +537,10 @@ class Build_DataLoader_Pipeline():
             self.data_class = Data_Prepare(self.data_dict, self.labels_dict, n_neighbors=self.n_neighbors)
             self.data_class.transform()
             print('Data transformation Done!\n')
-       #     self.data_class.correlation_with_label(type_corr=self.type_corr, intersection=self.intersection, verbose=self.verbose)
-        #    print('Check correlation with labels Done!\n')
-          #  self.data_class.correlation_btw_features(verbose=self.verbose)  
-       #     print('Check correlation between features Done!\n')  
+            self.data_class.correlation_with_label(type_corr=self.type_corr, intersection=self.intersection, verbose=self.verbose)
+            print('Check correlation with labels Done!\n')
+            self.data_class.correlation_btw_features(verbose=self.verbose)  
+            print('Check correlation between features Done!\n')  
             
             with open(f"data_prepare_class_{self.path_name}", "wb") as fout:
                 pickle.dump(self.data_class, fout)
@@ -559,8 +592,13 @@ class Build_DataLoader_Pipeline():
         test_wrap = Dataset_Wrap(X_test, y_test, sequence=sequence, n_neighbors=self.n_neighbors)
         
         loader_train = DataLoader(dataset = train_wrap, 
-                                  batch_sampler = BalancePos_BatchSampler(train_wrap, batch_size= batch_size))
-        loader_test = DataLoader(dataset = test_wrap, batch_size= batch_size*2, shuffle=True)
+                                  batch_sampler = BalancePos_BatchSampler(train_wrap, batch_size= batch_size),
+                                  random_state=random_state+10)
+        loader_test = DataLoader(dataset = test_wrap, batch_size= batch_size*2, shuffle=True,
+                                    generator=g_gpu.manual_seed(random_state+30))
+            
+
 
         return  loader_train, loader_test
+
 
