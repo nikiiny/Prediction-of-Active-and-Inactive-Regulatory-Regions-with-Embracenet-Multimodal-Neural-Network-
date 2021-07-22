@@ -8,6 +8,7 @@ import sqlite3
 from sqlalchemy import create_engine
 from collections import defaultdict
 import copy
+from sklearn.model_selection import train_test_split
 
 import torch
 import torch.nn.functional as F
@@ -18,13 +19,14 @@ import optuna
 import botorch
 from optuna.integration import BoTorchSampler
 
-from .utils import (EarlyStopping, accuracy, F1, AUPRC_precision_recall, size_out_convolution, 
-    weight_reset, get_loss_weights_from_dataloader, get_input_size, plot_other_scores, 
-    plot_F1_scores)
+from .utils import (EarlyStopping, F1_precision_recall, AUPRC, size_out_convolution, 
+    weight_reset, get_loss_weights_from_dataloader, get_loss_weights_from_labels, 
+    get_input_size, plot_other_scores, plot_F1_scores)
 from BIOINF_tesi.data_pipe.utils import data_augmentation
 from BIOINF_tesi.data_pipe.dataprepare import Data_Prepare, Dataset_Wrap, BalancePos_BatchSampler
 
 
+##### SISTEMAAAA
 
 def fit(model, 
         train_loader, 
@@ -68,8 +70,8 @@ def fit(model,
     basepath = 'exp'
 
     # keep track of epoch losses 
-    f1_train_scores = []
-    f1_test_scores = []
+    AUPRC_train_scores = []
+    AUPRC_test_scores = []
     AUPRC_precision_recall_test_scores = []
 
     # convert model data type to double
@@ -83,9 +85,9 @@ def fit(model,
         train_loss = 0.0
         test_loss = 0.0
         
-        f1_train = 0.0
-        f1_test = 0.0
-        AUPRC_precision_recall_test = 0.0
+        AUPRC_train = 0.0
+        AUPRC_test = 0.0
+       # AUPRC_precision_recall_test = 0.0
 
     
     # set the model in training modality
@@ -106,8 +108,8 @@ def fit(model,
             optimizer.step()
             # update training loss
             train_loss += loss.item()
-            # calculate F1 training score as a weighted sum of the single F1 scores
-            f1_train += F1(output,target)
+            # calculate AUPRC training score as a weighted sum of the single AUPRC scores
+            AUPRC_train += AUPRC(output,target)
 
         
         # set the model in testing modality
@@ -120,24 +122,24 @@ def fit(model,
             loss = criterion.double()(output.float(), target.squeeze())
             # update test loss
             test_loss += loss.item()
-            # calculate F1 test score as a weighted sum of the single F1 scores
-            f1_test += F1(output,target) 
-            AUPRC_precision_recall_test += AUPRC_precision_recall(output,target)
+            # calculate AUPRC test score as a weighted sum of the single AUPRC scores
+            AUPRC_test += AUPRC(output,target) 
+           # AUPRC_precision_recall_test += F1_precision_recall(output,target)
         
     
         # calculate epoch score by dividing by the number of observations
-        f1_train /= (len(train_loader))
-        f1_test /= (len(test_loader))
-        AUPRC_precision_recall_test /= (len(test_loader))
+        AUPRC_train /= (len(train_loader))
+        AUPRC_test /= (len(test_loader))
+       # AUPRC_precision_recall_test /= (len(test_loader))
         # store epoch score
-        f1_train_scores.append(f1_train)    
-        f1_test_scores.append(f1_test)
-        AUPRC_precision_recall_test_scores.append(AUPRC_precision_recall_test)
+        AUPRC_train_scores.append(AUPRC_train)    
+        AUPRC_test_scores.append(AUPRC_test)
+        #AUPRC_precision_recall_test_scores.append(AUPRC_precision_recall_test)
           
         # print training/test statistics 
         if verbose == True:
-            print('Epoch: {} \tTraining F1 score: {:.4f} \tTest F1 score: {:.4f} \tTraining Loss: {:.4f} \tTest Loss: {:.4f}'.format(
-                epoch, f1_train, f1_test, train_loss, test_loss))
+            print('Epoch: {} \tTraining AUPRC score: {:.4f} \tTest AUPRC score: {:.4f} \tTraining Loss: {:.4f} \tTest Loss: {:.4f}'.format(
+                epoch, AUPRC_train, AUPRC_test, train_loss, test_loss))
     
     
 
@@ -149,7 +151,7 @@ def fit(model,
 
   
     # return the scores at each epoch + the AUPRC, precision and recall
-    return f1_train_scores, f1_test_scores, AUPRC_precision_recall_test_scores
+    return AUPRC_train_scores, AUPRC_test_scores #, AUPRC_precision_recall_test_scores
 
 
 
@@ -206,7 +208,7 @@ class Param_Search():
     
 
     def objective(self, trial):
-        """Defines the objective to be optimised (F1 test score) and saves
+        """Defines the objective to be optimised (AUPRC test score) and saves
         each final model.
         """
 
@@ -229,7 +231,7 @@ class Param_Search():
         for epoch in tqdm(range(1, self.num_epochs + 1), desc='Epochs'):
             train_loss = 0.0
             test_loss = 0.0
-            f1_test = 0.0
+            AUPRC_test = 0.0
 
             # set the model in training modality
             self.model.train()
@@ -265,22 +267,22 @@ class Param_Search():
                     loss = self.criterion.float()(output.float(), target.squeeze()) 
                 # update test loss 
                 test_loss += loss.item()
-                # calculate F1 test score as weighted sum of the single F1 scores
-                f1_test += F1(output,target)
+                # calculate AUPRC test score as weighted sum of the single AUPRC scores
+                AUPRC_test += AUPRC(output,target)
                 
 
               # calculate epoch score by dividing by the number of observations
-            f1_test /= (len(self.test_loader))
+            AUPRC_test /= (len(self.test_loader))
         
             # pass the score of the epoch to the study to monitor the intermediate objective values
-            trial.report(f1_test, epoch)
+            trial.report(AUPRC_test, epoch)
 
         # save the final model named with the number of the trial 
         with open("{}{}.pickle".format(self.study_name, trial.number), "wb") as fout:
             pickle.dump(self.model, fout)
         
-        # return F1 score to the study
-        return f1_test
+        # return AUPRC score to the study
+        return AUPRC_test
 
 
 
@@ -430,21 +432,21 @@ class Kfold_CV():
     def model_testing(self, train_loader, test_loader, num_epochs,
                       test_model_path, n_of_iterarion):
         
-        F1_train, F1_test, other_scores = fit(model=self.model_, train_loader=train_loader, 
+        AUPRC_train, AUPRC_test = fit(model=self.model_, train_loader=train_loader, #OTHER_SCORES
                                     test_loader=test_loader, criterion=self.criterion, 
                                     optimizer=self.optimizer, num_epochs=num_epochs, 
                                     patience=3, verbose=False)
             
-        self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'F1_train'] = F1_train
-        self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'F1_test'] = F1_test
-        self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_precision_recall'] = other_scores
+        self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_train'] = AUPRC_train
+        self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_test'] = AUPRC_test
+      #  self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_precision_recall'] = other_scores
             
-        print(f'F1 test score: {F1_test[-1]}\n\n')
-        print(f'AUPRC: {other_scores[0]}, Precision: {other_scores[1]}, Recall: {other_scores[2]}')
+        print(f'AUPRC test score: {AUPRC_test[-1]}\n\n')
+       # print(f'AUPRC: {other_scores[0]}, Precision: {other_scores[1]}, Recall: {other_scores[2]}')
             
         # save the params of the best testing model (for loading in embracenet)
-        self.avg_score.append(F1_test[-1])
-        if F1_test[-1] == max(self.avg_score):
+        self.avg_score.append(AUPRC_test[-1])
+        if AUPRC_test[-1] == max(self.avg_score):
                 save_best_model(self.model_, test_model_path) 
     
     
@@ -517,18 +519,18 @@ class Kfold_CV():
                                test_model_path, i)
                 
         
-        print(f'\n{n_folds}-FOLD CROSS-VALIDATION F1 TEST SCORE: {np.round(sum(self.avg_score)/n_folds, 5)}')
+        print(f'\n{n_folds}-FOLD CROSS-VALIDATION AUPRC TEST SCORE: {np.round(sum(self.avg_score)/n_folds, 5)}')
             
     
     def plot_results(self):
         
         for i in self.n_folds:
             print(f'ITERATION N. {i}')
-            plot_F1_scores(self.scores_dict[f'trial_n_{i}'][f'F1_train'],
-                              self.scores_dict[f'trial_n_{i}'][f'F1_test'])
+            plot_F1_scores(self.scores_dict[f'trial_n_{i}'][f'AUPRC_train'],
+                              self.scores_dict[f'trial_n_{i}'][f'AUPRC_test'])
             
             
-            plot_other_scores(self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_precision_recall'])
+            #plot_other_scores(self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_precision_recall'])
     
     
 

@@ -4,9 +4,7 @@ import itertools
 from collections import defaultdict, OrderedDict
 from sklearn.metrics import make_scorer
 from sklearn.metrics import average_precision_score
-from scipy.stats import spearmanr
-from scipy.stats import kruskal
-from scipy.stats import wilcoxon
+from scipy.stats import spearmanr, kruskal, ranksums
 from imblearn.over_sampling import SMOTE
 
 
@@ -45,7 +43,7 @@ def kruskal_wallis_test(X, y, kruskal_pval_threshold = 0.05,verbose=False):
         neg_samples = X[col][neg_index]
             
         _, p_value = kruskal(pos_samples, neg_samples)
-        if p_value < kruskal_pval_threshold:
+        if p_value > kruskal_pval_threshold:
             uncorrelated.add(col)
                 
             if verbose:
@@ -84,8 +82,8 @@ def wilcoxon_test(X, y, wilcoxon_pval_threshold = 0.05,verbose=False):
         pos_samples = X[col][pos_index]
         neg_samples = X[col][neg_index]
             
-        _, p_value = wilcoxon(pos_samples, neg_samples)
-        if p_value < wilcoxon_pval_threshold:
+        _, p_value = ranksums(pos_samples, neg_samples)
+        if p_value > wilcoxon_pval_threshold:
             uncorrelated.add(col)
                 
             if verbose:

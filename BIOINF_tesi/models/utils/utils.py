@@ -6,7 +6,7 @@ import matplotlib.pylab as plt
 import os
 import pickle
 from tqdm.auto import tqdm
-from sklearn.metrics import f1_score, precision_score, recall_score, average_precision_score
+from sklearn.metrics import precision_recall_fscore_support, average_precision_score
 import re
 from collections import defaultdict
 
@@ -198,21 +198,20 @@ def accuracy(output, target):
   #we transform them in float, 1 if True, 0 is False, then we return the mean of the vector
 
 
-def F1(output, target, average='binary'):
-  pred = torch.argmax(output, dim=1)
-  return f1_score(target.cpu().detach().numpy(), pred.cpu().detach().numpy(), average=average)
-
-
-
-def AUPRC_precision_recall(output, target, average='binary'):
+def AUPRC(output, target):
     pred = torch.argmax(output, dim=1).cpu().detach().numpy()
     target = target.cpu().detach().numpy()
+
+    return average_precision_score(target, pred)
+
+
+def F1_precision_recall(output, target):
+    pred = torch.argmax(output, dim=1).cpu().detach().numpy()
+    target = target.cpu().detach().numpy()
+
+    precision, recall, F1, _ = precision_recall_fscore_support(target, pred)
     
-    AUPRC = average_precision_score(target, pred, average=average)
-    precision = precision_score(target, pred, average=average)
-    recall = recall_score(target, pred, average=average)
-    
-    return (AUPRC, precision, recall)
+    return F1, precision, recall
 
 
 

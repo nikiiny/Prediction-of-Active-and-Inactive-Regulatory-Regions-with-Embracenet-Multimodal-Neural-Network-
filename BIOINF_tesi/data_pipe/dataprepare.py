@@ -7,7 +7,7 @@ import pickle
 import random
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import RobustScaler, MinMaxScaler
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.impute import KNNImputer
 import torch
@@ -78,6 +78,7 @@ class Data_Prepare():
         self.spearman_corr_threshold = spearman_corr_threshold
         
         self.robust_scaler = RobustScaler()
+        self.minmax_scaler = MinMaxScaler()
         self.knn_imputer = KNNImputer(n_neighbors=self.n_neighbors)
         
         self.X_train = []
@@ -93,9 +94,10 @@ class Data_Prepare():
         """Applies robust scaler to numeric genomic features by row/column?"""
         for key in self.data_dict.keys():
             if key != 'fa':
-                self.data_dict[key] = pd.DataFrame(self.robust_scaler.fit_transform(self.data_dict[key].values),
-                                                   index=self.data_dict[key].index, 
-                                                   columns=self.data_dict[key].columns)
+                self.data_dict[key] = pd.DataFrame(
+                    self.minmax_scaler.fit_transform(self.robust_scaler.fit_transform(self.data_dict[key].values)),
+                    index=self.data_dict[key].index, 
+                    columns=self.data_dict[key].columns)
                 
     
     def knn_imputation_genfeatures(self):
@@ -371,14 +373,11 @@ class Dataset_Wrap(Dataset):
         self.pos_index = list(self.X[self.y==1].index)
         self.neg_index = list(self.X[self.y==0].index)
         
-        # some observations don't have some of the nucleotides, so it will result in
-        #matrices of different dimensions which cannot be concatenated
-        self.label_encoder = LabelEncoder().fit(np.array(['a','c','g','n','t']))
-        # get rid of value 3 which is 'n' (nan)
-        self.knn_imputer = KNNImputer(n_neighbors=self.n_neighbors)
         # fit one-hot encoder
         self.onehot_encoder = OneHotEncoder(sparse=False).fit(np.array([0,1,2,4]).reshape(-1, 1)) 
 
+        # select with equal probability one of the nucleotides
+        bp = random.choice(['a', 'c','g','t'])
 
     def __len__(self):
         return (self.X.shape[0])  
@@ -390,14 +389,10 @@ class Dataset_Wrap(Dataset):
         
         if self.sequence:
             # all the letters in lowercase
-            data = list(data.lower()) # or [i for i in data.lower()] # original
-            # apply encoding
-            data = self.label_encoder.transform(data)
-            # value 3 corresponds to n (nan)
-            data = [np.nan if i ==3 else i for i in data]
-            # impute missing data with knn
-            data =  self.knn_imputer.fit_transform( np.array(data).reshape(-1,1) ).astype(int).round()
-
+            data = list(data.lower()) 
+            # value n corresponds to nan, so we substitute it with a random bp
+            data = [bp if i =='n' else i for i in data]
+            # one hot encode
             data = self.onehot_encoder.transform(np.array(data).reshape(-1, 1))
             data = data.T
             
@@ -421,6 +416,7 @@ class BalancePos_BatchSampler(Sampler):
         
         self.pos_index = dataset.pos_index
         self.neg_index = dataset.neg_index
+        self.random_state = random_state
         
         self.batch_size = batch_size
         
@@ -430,7 +426,7 @@ class BalancePos_BatchSampler(Sampler):
             self.n_batches = len(dataset) // self.batch_size
     
     def __iter__(self):
-        random.seed(random_state)
+        random.seed(self.random_state)
         random.shuffle(self.pos_index)
         random.shuffle(self.neg_index)
         
@@ -473,8 +469,7 @@ class Build_DataLoader_Pipeline():
     containing preprocessed data.
     n_neighbours: number of neighbours for KNN imputer.
         Default: 5
-    type_corr (str or list of str): type of correlation. Values are ['point_biserial_corr', 
-        'logistic_regression', 'kruskal_wallis_corr', 'wilcoxon_corr'].
+    type_test (str or list of str): type of test. Values are ['kruskal_wallis_corr', 'wilcoxon_corr'].
     intersection (bool): whether to remove the uncorrelated features selected by all the methods (intersection)
         or the uncorrelated features selected by at least one method (union).
         Default: False
@@ -499,7 +494,7 @@ class Build_DataLoader_Pipeline():
                  labels_dict,
                  path_name=None,
                  n_neighbors=5,
-                 type_corr='kruskal_wallis_corr',
+                 type_test='kruskal_wallis_corr',
                  intersection=False, 
                  pb_corr_threshold=0.05,
                  kruskal_pval_threshold = 0.05,
@@ -511,7 +506,7 @@ class Build_DataLoader_Pipeline():
         self.labels_dict = labels_dict
         self.path_name = path_name
         self.n_neighbors = n_neighbors
-        self.type_corr = type_corr
+        self.type_test = type_test
         self.intersection = intersection
         self.pb_corr_threshold = pb_corr_threshold
         self.kruskal_pval_threshold = kruskal_pval_threshold
@@ -537,7 +532,7 @@ class Build_DataLoader_Pipeline():
             self.data_class = Data_Prepare(self.data_dict, self.labels_dict, n_neighbors=self.n_neighbors)
             self.data_class.transform()
             print('Data transformation Done!\n')
-            self.data_class.correlation_with_label(type_corr=self.type_corr, intersection=self.intersection, verbose=self.verbose)
+            self.data_class.correlation_with_label(type_test=self.type_test, intersection=self.intersection, verbose=self.verbose)
             print('Check correlation with labels Done!\n')
             self.data_class.correlation_btw_features(verbose=self.verbose)  
             print('Check correlation between features Done!\n')  
@@ -595,7 +590,7 @@ class Build_DataLoader_Pipeline():
                                   batch_sampler = BalancePos_BatchSampler(train_wrap, batch_size= batch_size),
                                   random_state=random_state+10)
         loader_test = DataLoader(dataset = test_wrap, batch_size= batch_size*2, shuffle=True,
-                                    generator=g_gpu.manual_seed(random_state+30))
+                                    generator = g_gpu.manual_seed(random_state+30))
             
 
 
