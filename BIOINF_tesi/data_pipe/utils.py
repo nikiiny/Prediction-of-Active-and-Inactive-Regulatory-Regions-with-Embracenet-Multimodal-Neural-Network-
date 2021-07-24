@@ -5,12 +5,28 @@ from collections import defaultdict, OrderedDict
 from sklearn.metrics import make_scorer
 from sklearn.metrics import average_precision_score
 from scipy.stats import spearmanr, kruskal, ranksums
-from imblearn.over_sampling import SMOTE
+import miceforest as mf
 
 
 TYPE_TEST = ['wilcoxon_test','kruskal_wallis_test']
 TYPE_AUGM_GENFEATURES = ['smote', 'double']
-    
+
+
+def MICE(X, random_state=100, verbose=False):
+    # create object
+    kds = mf.KernelDataSet(
+        X,
+        save_all_iterations=False,
+        random_state=random_state)
+    # run algorithm for 10 iterations and use all the processors
+    kds.mice(6, n_jobs=-1)
+    if verbose:
+        print(kds)
+    # Return the completed kernel data
+    return kds.complete_data()
+
+
+
 def kruskal_wallis_test(X, y, kruskal_pval_threshold = 0.05,verbose=False):
     """The Kruskal–Wallis test by ranks, or one-way ANOVA on ranks, is a non-parametric method 
     for testing whether samples originate from the same distribution. The samples may have different
@@ -154,7 +170,7 @@ def spearman_corr(X, spearman_corr_threshold=0.75, verbose=False):
         for col1, col2 in itertools.combinations(X.columns, 2):
             corr, _ = spearmanr(X[col1].values, X[col2].values)
             
-            if corr >= spearman_corr_threshold:
+            if abs(corr) >= spearman_corr_threshold:
                 correlated[corr]=[col1,col2]
                 
                 if verbose:

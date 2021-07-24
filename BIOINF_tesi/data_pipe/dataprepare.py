@@ -5,18 +5,15 @@ import pandas as pd
 import numpy as np
 import pickle
 import random
-from sklearn.preprocessing import LabelEncoder
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.preprocessing import RobustScaler, MinMaxScaler
+from sklearn.preprocessing import OneHotEncoder, RobustScaler, MinMaxScaler
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.impute import KNNImputer
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, Sampler
 from sklearn.model_selection import train_test_split, KFold
 from collections import OrderedDict, defaultdict
 
-from .utils import (kruskal_wallis_test, wilcoxon_test, spearman_corr, remove_correlated_features,
+from .utils import (MICE, kruskal_wallis_test, wilcoxon_test, spearman_corr, remove_correlated_features,
     data_augmentation)
 
 
@@ -28,7 +25,7 @@ g_gpu = torch.Generator(device)
 
 
 class Data_Prepare():
-    """Applies robust scaler and KNN imputer to genomic features. 
+    """Applies robust scaler and MICE imputer to genomic features. 
     Checks for highly correlated features (Spearman correlation) and features not 
     correlated to the output (Point Biserial correlation or/and Logistic regression AUPRC).
     Splits dataset either for hyperparameters tuning or model testing.
@@ -37,9 +34,6 @@ class Data_Prepare():
     ---------------
     data_dict (dict): dictionary of cell lines (pd.DataFrame).
     labels_dict (dict): dictionary of cell lines labels (pd.Series).
-    n_neighbours: number of neighbours for KNN imputer.
-        Default: 5
-        Default: 0.05
     kruskal_pval_threshold: kruskal-wallis p-value threshold for correlation
         between X and y.
         Default: 0.05
@@ -54,7 +48,6 @@ class Data_Prepare():
     def __init__(self, 
                  data_dict, 
                  labels_dict, 
-                 n_neighbors=5,
                  kruskal_pval_threshold = 0.05,
                  wilcoxon_pval_threshold = 0.05,
                  spearman_corr_threshold=0.75
@@ -72,14 +65,12 @@ class Data_Prepare():
                 self.data_dict[key] = self.data_dict[key].drop(['chrom','chromStart','chromEnd','strand'], axis=1)
                 
         
-        self.n_neighbors = n_neighbors
         self.kruskal_pval_threshold = kruskal_pval_threshold
         self.wilcoxon_pval_threshold = wilcoxon_pval_threshold
         self.spearman_corr_threshold = spearman_corr_threshold
         
         self.robust_scaler = RobustScaler()
         self.minmax_scaler = MinMaxScaler()
-        self.knn_imputer = KNNImputer(n_neighbors=self.n_neighbors)
         
         self.X_train = []
         self.y_train = []
@@ -100,19 +91,21 @@ class Data_Prepare():
                     columns=self.data_dict[key].columns)
                 
     
-    def knn_imputation_genfeatures(self):
-        """Applies KNN imputation to numeric genomic features."""
+    def mice_imputation_genfeatures(self):
+        """Applies MICE imputation to numeric genomic features."""
         for key in self.data_dict.keys():
             if key != 'fa':
-                self.data_dict[key] = pd.DataFrame(self.knn_imputer.fit_transform(self.data_dict[key].values),
-                                                   index=self.data_dict[key].index, 
-                                                   columns=self.data_dict[key].columns)
+                # if there are null values apply MICE, else pass
+                try:
+                    self.data_dict[key] = MICE(self.data_dict[key])
+                except:
+                    pass
 
     
     def transform(self):
         
         self.scale_data_genfeatures()
-        self.knn_imputation_genfeatures()
+        self.mice_imputation_genfeatures()
         
     
     
@@ -355,19 +348,18 @@ class Data_Prepare():
 
 class Dataset_Wrap(Dataset):
     """Builds a Dataset object and saves indexes of positive and negative labels.
-    If the data are the genomic sequence, transforms labels in integer and applies KNN imputer.
+    If the data are the genomic sequence, transforms labels in integer and applies MICE imputer.
 
     Attributes:
     ---------------
     pos_index: indexes of positive labels.
     neg_index: indexes of negative labels.
     """
-    def __init__(self, X, y, n_neighbors=5, sequence=False):
+    def __init__(self, X, y, sequence=False):
         super(Dataset_Wrap, self).__init__()
         
         self.X = X
         self.y = y
-        self.n_neighbors = n_neighbors
         self.sequence = sequence
         
         self.pos_index = list(self.X[self.y==1].index)
@@ -453,7 +445,7 @@ class Build_DataLoader_Pipeline():
     """Preprocesses data and builds a dataloader object.
 
     Applies robust scaler to genomic features and one hot encoding to genomic sequence.
-    Applies KNN imputer.
+    Applies MICE imputer.
     Removes correlated features and features uncorrelated with the target.
     Saves the object containing Data_Prepare class with preprocessed data.
     Splits dataset in training and test set. If the usage is for hyperparameters tuning, 
@@ -467,8 +459,6 @@ class Build_DataLoader_Pipeline():
     labels_dict (dict): dictionary of cell lines labels (pd.Series).
     path_name (str): name of pickle file storing the Data_Prepare class 
     containing preprocessed data.
-    n_neighbours: number of neighbours for KNN imputer.
-        Default: 5
     type_test (str or list of str): type of test. Values are ['kruskal_wallis_corr', 'wilcoxon_corr'].
     intersection (bool): whether to remove the uncorrelated features selected by all the methods (intersection)
         or the uncorrelated features selected by at least one method (union).
@@ -493,8 +483,7 @@ class Build_DataLoader_Pipeline():
                  data_dict, 
                  labels_dict,
                  path_name=None,
-                 n_neighbors=5,
-                 type_test='kruskal_wallis_corr',
+                 type_test='kruskal_wallis_test',
                  intersection=False, 
                  pb_corr_threshold=0.05,
                  kruskal_pval_threshold = 0.05,
@@ -505,7 +494,6 @@ class Build_DataLoader_Pipeline():
         self.data_dict =  data_dict
         self.labels_dict = labels_dict
         self.path_name = path_name
-        self.n_neighbors = n_neighbors
         self.type_test = type_test
         self.intersection = intersection
         self.pb_corr_threshold = pb_corr_threshold
@@ -529,12 +517,12 @@ class Build_DataLoader_Pipeline():
             with open("data_prepare_class_{}".format(self.path_name), "rb") as fin:
                 self.data_class = pickle.load(fin)
         else:
-            self.data_class = Data_Prepare(self.data_dict, self.labels_dict, n_neighbors=self.n_neighbors)
+            self.data_class = Data_Prepare(self.data_dict, self.labels_dict)
             self.data_class.transform()
             print('Data transformation Done!\n')
-            self.data_class.correlation_with_label(type_test=self.type_test, intersection=self.intersection, verbose=self.verbose)
+         #   self.data_class.correlation_with_label(type_test=self.type_test, intersection=self.intersection, verbose=self.verbose)
             print('Check correlation with labels Done!\n')
-            self.data_class.correlation_btw_features(verbose=self.verbose)  
+          #  self.data_class.correlation_btw_features(verbose=self.verbose)  
             print('Check correlation between features Done!\n')  
             
             with open(f"data_prepare_class_{self.path_name}", "wb") as fout:
@@ -583,8 +571,8 @@ class Build_DataLoader_Pipeline():
         
         self.index = index
         
-        train_wrap = Dataset_Wrap(X_train, y_train, sequence=sequence, n_neighbors=self.n_neighbors)
-        test_wrap = Dataset_Wrap(X_test, y_test, sequence=sequence, n_neighbors=self.n_neighbors)
+        train_wrap = Dataset_Wrap(X_train, y_train, sequence=sequence)
+        test_wrap = Dataset_Wrap(X_test, y_test, sequence=sequence)
         
         loader_train = DataLoader(dataset = train_wrap, 
                                   batch_sampler = BalancePos_BatchSampler(train_wrap, batch_size= batch_size),
