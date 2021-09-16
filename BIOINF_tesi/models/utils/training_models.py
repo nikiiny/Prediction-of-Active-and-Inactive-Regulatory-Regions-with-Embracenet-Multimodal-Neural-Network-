@@ -220,11 +220,11 @@ class Param_Search():
         # while CNN don't
         self.model_name = model.__name__
         
-        if sampler = 'BO':
+        if sampler == 'BO':
             self.sampler = BoTorchSampler()
-        elif sampler = 'TPE':
+        elif sampler == 'TPE':
             self.sampler = TPESampler()
-        elif sampler = 'random':
+        elif sampler == 'random':
             self.sampler = RandomSampler()
     
 
