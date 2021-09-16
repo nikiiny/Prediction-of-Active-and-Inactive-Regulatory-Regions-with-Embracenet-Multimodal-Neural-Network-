@@ -3,7 +3,8 @@ import numpy as np
 import os
 import re
 import pickle
-from tqdm.auto import tqdm
+#from tqdm.auto import tqdm
+from tqdm import tqdm
 import sqlite3
 from sqlalchemy import create_engine
 from collections import defaultdict
@@ -32,7 +33,8 @@ from BIOINF_tesi.data_pipe.dataprepare import Data_Prepare, Dataset_Wrap, Balanc
 def fit(model, 
         train_loader, 
         test_loader, 
-        criterion, 
+        criterion,
+        device,
         optimizer=None, 
         num_epochs=100,
         patience=6,
@@ -47,6 +49,7 @@ def fit(model,
     train_loader (DataLoader): training DataLoader object.
     test_loader (DataLoader): testing DataLoader object.
     criterion: loss function for training the model.
+    device: 'CPU' or 'CUDA'.
     optimizer (torch.optim): optimization algorithm for training the model. 
     num_epochs (int): number of epochs.
     patience (int): number of epochs in which the test error is not anymore decreasing
@@ -77,7 +80,7 @@ def fit(model,
     F1_precision_recall_test_scores = []
 
     # convert model data type to double
-    model = model.double()
+    model = model.double().to(device)
 
     # define early stopping
     early_stopping = EarlyStopping(patience=patience, delta=delta, verbose=True)
@@ -97,6 +100,9 @@ def fit(model,
 
         for data, target in train_loader:
         
+            target.to(device)
+            data.to(device)
+            
             target = target.reshape(-1)
             # clear the gradients of all optimized variables
             optimizer.zero_grad()
@@ -120,6 +126,9 @@ def fit(model,
         # set the model in testing modality
         model.eval()
         for data, target in test_loader:
+            
+            target.to(device)
+            data.to(device)
 
             # forward pass: compute predicted outputs by passing inputs to the model
             output = model(data.double())
@@ -201,6 +210,7 @@ class Param_Search():
                criterion,
                num_epochs,
                study_name,
+               device,
                sampler='BO',
                n_trials=4
                ):
@@ -210,8 +220,9 @@ class Param_Search():
         self.criterion = criterion
         self.num_epochs = num_epochs
         self.study_name = study_name
-        self.n_trials = n_trials
+        self.device = device
         self.sampler = sampler
+        self.n_trials = n_trials
         self.best_model = None
 
 
@@ -235,9 +246,9 @@ class Param_Search():
 
         if self.model_name.startswith('FFNN'):
             input_size = get_input_size(self.train_loader)
-            self.model = self.model_(trial, in_features=input_size)
+            self.model = self.model_(trial, in_features=input_size, device=self.device) #.to(self.device)
         else:
-            self.model = self.model_(trial)
+            self.model = self.model_(trial, device=self.device) #.to(self.device)
 
         # generate the possible optimizers
 
@@ -263,6 +274,7 @@ class Param_Search():
             AUPRC_test = 0.0
 
             # set the model in training modality
+            self.model.to(self.device)
             self.model.train()
             for data, target in self.train_loader:
                 
@@ -270,12 +282,12 @@ class Param_Search():
                 # clear the gradients of all optimized variables
                 optimizer.zero_grad()
                 # forward pass: compute predicted outputs by passing inputs to the model
-                output = self.model(data.double())
+                output = self.model(data.double().to(self.device))
                 # calculate the batch loss as a sum of the single losses
                 try:
-                    loss = self.criterion.double()(output.float(), target.squeeze()) 
+                    loss = self.criterion.double().to(self.device)(output.float().to(self.device), target.squeeze().to(self.device)) 
                 except:
-                    loss = self.criterion.float()(output.float(), target.squeeze()) 
+                    loss = self.criterion.float().to(self.device)(output.float().to(self.device), target.squeeze().to(self.device)) 
                 # backward pass: compute gradient of the loss wrt model parameters
                 loss.backward()
                 # perform a single optimization step (parameter update)
@@ -286,14 +298,14 @@ class Param_Search():
             # set the model in testing modality
             self.model.eval()
             for data, target in self.test_loader:  
-
+                
                 # forward pass: compute predicted outputs by passing inputs to the model
-                output = self.model(data.double())
+                output = self.model(data.double().to(self.device))
                 # calculate the batch loss as a sum of the single losses
                 try:
-                    loss = self.criterion.double()(output.float(), target.squeeze()) 
+                    loss = self.criterion.double().to(self.device)(output.float().to(self.device), target.squeeze().to(self.device)) 
                 except:
-                    loss = self.criterion.float()(output.float(), target.squeeze()) 
+                    loss = self.criterion.float().to(self.device)(output.float().to(self.device), target.squeeze().to(self.device)) 
                 # update test loss 
                 test_loss += loss.item()
                 # calculate AUPRC test score as weighted sum of the single AUPRC scores
@@ -443,11 +455,11 @@ class Kfold_CV():
         
         
     def hyper_tuning(self, train_loader, test_loader, num_epochs,
-                     study_name, hp_model_path):
+                     study_name, hp_model_path, device, sampler):
             
             param_search = Param_Search(model=self.model_, train_loader=train_loader, 
                                         test_loader=test_loader, criterion=self.criterion, 
-                                        num_epochs=num_epochs,
+                                        num_epochs=num_epochs, device=device, sampler=sampler,
                                         n_trials=3, study_name=study_name)
 
             param_search.run_trial()
@@ -477,11 +489,11 @@ class Kfold_CV():
     
     
     def model_testing(self, train_loader, test_loader, num_epochs,
-                      test_model_path, n_of_iterarion):
+                      test_model_path, device, n_of_iterarion):
         
         AUPRC_train, AUPRC_test, other_scores = fit(model=self.model_, train_loader=train_loader, #OTHER_SCORES
-                                    test_loader=test_loader, criterion=self.criterion, 
-                                    optimizer=self.optimizer, num_epochs=num_epochs, 
+                                    test_loader=test_loader, criterion=self.criterion,
+                                    device=device, optimizer=self.optimizer, num_epochs=num_epochs, 
                                     patience=6, verbose=False)
             
         self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_train'] = AUPRC_train
@@ -500,7 +512,8 @@ class Kfold_CV():
     
     def __call__(self,
             build_dataloader_pipeline, 
-            cell_line, 
+            cell_line,
+            device,
             sequence=False, 
             model=None,
             augmentation=False,
@@ -510,6 +523,7 @@ class Kfold_CV():
             num_epochs=50, 
             batch_size=100,
             study_name=None,
+            sampler='BO',
             hp_model_path=None, #ex: FFNN/best_model_FFNN_hp
             test_model_path=None # ex: FNN/best_model_FFNN_test
             ):
@@ -553,7 +567,7 @@ class Kfold_CV():
                                                augmentation=False)
             
             self.hyper_tuning(train_loader, test_loader, num_epochs,
-                              study_name, hp_model_path)
+                              study_name, hp_model_path, device, sampler)
             
             
             print('\n===============> MODEL TESTING')
@@ -566,7 +580,7 @@ class Kfold_CV():
                                                augmentation=False)
             
             self.model_testing(train_loader, test_loader, num_epochs,
-                               test_model_path, i)
+                               test_model_path, device, i)
                 
         
         print(f'\n{n_folds}-FOLD CROSS-VALIDATION AUPRC TEST SCORE: {np.round(sum(self.avg_score)/n_folds, 5)}')

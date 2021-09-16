@@ -8,10 +8,11 @@ from .utils import size_out_convolution
 
 class CNN_LSTM(nn.Module):
 
-    def __init__(self, trial, classes=2):
+    def __init__(self, trial, device, classes=2):
         super(CNN_LSTM, self).__init__()
         self.trial = trial
         self.classes = classes
+        self.device = device
         self.CNN_model = []
         self.LSTM_model = []
         
@@ -76,11 +77,11 @@ class CNN_LSTM(nn.Module):
     
     def forward(self, x):
         
-        out = self.CNN_model(x)
+        out = self.CNN_model(x).to(self.device)
         out = out.reshape(out.size(0),-1, 4) # batch, timesteps, rest #why????????
         out, _ = self.LSTM_model(out)
         out = out.reshape(out.size(0),-1) # batch_size, rest
-        self.last_layer1 = nn.Linear(out.size(1), 1000)
+        self.last_layer1 = nn.Linear(out.size(1), 1000).to(self.device)
         out = self.last_layer1.float()(out.float())
         out = self.last_layer2.float()(out)
         out = self.last_output.float()(out)
@@ -90,4 +91,4 @@ class CNN_LSTM(nn.Module):
         # OUTPUT HAS SHAPE (batch_size, seq_len, hidden_dim)
         # seq len è l output del cnn
         
-        return out
+        return out.to(self.device)

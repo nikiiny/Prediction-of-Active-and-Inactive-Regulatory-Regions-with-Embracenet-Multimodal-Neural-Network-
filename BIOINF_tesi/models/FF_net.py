@@ -7,10 +7,11 @@ import numpy as np
 
 class FFNN(nn.Module):
 
-    def __init__(self, trial, in_features, classes=2):
+    def __init__(self, trial, in_features, device, classes=2):
         super(FFNN, self).__init__()
         self.trial = trial
         self.classes = classes
+        self.device = device
         self.model = []
         
         # We optimize the number of layers, hidden units and dropout ratio in each layer.
@@ -44,4 +45,4 @@ class FFNN(nn.Module):
     
     def forward(self, x):
         
-        return self.model(x)
+        return self.model(x).to(self.device)

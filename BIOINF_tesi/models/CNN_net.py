@@ -8,10 +8,11 @@ from .utils import size_out_convolution
 
 class CNN(nn.Module):
 
-    def __init__(self, trial, classes=2):
+    def __init__(self, trial, device, classes=2):
         super(CNN, self).__init__()
         self.trial = trial
         self.classes = classes
+        self.device = device
         self.CNN_model = []
         
         maxpool_kernel_size=10
@@ -76,4 +77,4 @@ class CNN(nn.Module):
         out = self.last_layer2(out)
         out = self.last_output(out)
 
-        return out
+        return out.to(self.device)
