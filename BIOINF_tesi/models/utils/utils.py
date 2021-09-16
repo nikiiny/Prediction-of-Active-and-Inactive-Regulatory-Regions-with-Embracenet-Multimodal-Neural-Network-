@@ -39,7 +39,7 @@ class EarlyStopping():
             be stopped, False else.
         """
     
-    def __init__(self, patience=3, verbose=False, delta=0, trace_func=print):
+    def __init__(self, patience=5, verbose=False, delta=0, trace_func=print):
        
         self.patience = patience
         self.verbose = verbose
@@ -48,7 +48,7 @@ class EarlyStopping():
         self.early_stop = False
         self.delta = delta
         self.trace_func = trace_func
-    def __call__(self, val_loss, model):
+    def __call__(self, val_loss):
 
         score = -val_loss
         
@@ -107,7 +107,7 @@ def save_best_model(model, path):
 
     basepath = 'models'
     basepath = basepath 
-    PATH = os.path.join(basepath, path + '.pt')
+    PATH = os.path.join(basepath, path)
     
     torch.save(model_param, PATH)
 
@@ -208,10 +208,8 @@ def AUPRC(output, target):
 def F1_precision_recall(output, target):
     pred = torch.argmax(output, dim=1).cpu().detach().numpy()
     target = target.cpu().detach().numpy()
-
-    precision, recall, F1, _ = precision_recall_fscore_support(target, pred)
     
-    return F1, precision, recall
+    return np.array(precision_recall_fscore_support(target, pred, average='macro', zero_division=0)[:3])
 
 
 
@@ -238,6 +236,10 @@ def get_loss_weights_from_labels(label):
     Returns normalized weights of positive and negative class according
     to Inverse Number of Samples (INS) from Series of labels.
     """
+
+    if isinstance(label, pd.DataFrame):
+        label=pd.Series(label.values)
+    
     pos = len(label[label==1])
     neg = len(label[label==0])
     

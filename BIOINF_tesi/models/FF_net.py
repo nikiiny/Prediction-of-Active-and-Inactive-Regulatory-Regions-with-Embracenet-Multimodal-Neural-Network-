@@ -5,10 +5,10 @@ from torch import Tensor
 import numpy as np
 
 
-class FFNN_define_model(nn.Module):
+class FFNN(nn.Module):
 
     def __init__(self, trial, in_features, classes=2):
-        super(FFNN_define_model, self).__init__()
+        super(FFNN, self).__init__()
         self.trial = trial
         self.classes = classes
         self.model = []
@@ -19,19 +19,21 @@ class FFNN_define_model(nn.Module):
 
         for i in range(n_layers):
             if i==0:
-                out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [4, 16, 32, 64, 128, 256])
+                out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [32, 64, 128, 256])
             elif i==1:
-                out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [4, 16, 32, 64, 128])
+                out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [16, 32, 64, 128])
             elif i==2:
                 out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [4, 16, 32, 64])
                 
             layers.append(nn.Linear(in_features, out_features))
             layers.append(nn.ReLU())
             
-            if i==0:
-                layers.append(nn.Dropout(0.3))
-            else:
-                layers.append(nn.Dropout(0.5))
+            if i<2:
+                dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.3, 0.4])
+                layers.append(nn.Dropout(dropout))
+            elif i==2:
+                dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.4, 0.5])
+                layers.append(nn.Dropout(dropout))
                 
                 
             in_features = out_features

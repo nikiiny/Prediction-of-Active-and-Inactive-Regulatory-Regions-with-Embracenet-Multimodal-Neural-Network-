@@ -13,7 +13,8 @@ from sklearn.model_selection import train_test_split
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
-import torch.optim as optim
+import torch.optim 
+import timm.optim
 from torch.utils.data import Dataset, DataLoader
 import optuna
 import botorch
@@ -21,20 +22,19 @@ from optuna.integration import BoTorchSampler
 
 from .utils import (EarlyStopping, F1_precision_recall, AUPRC, size_out_convolution, 
     weight_reset, get_loss_weights_from_dataloader, get_loss_weights_from_labels, 
-    get_input_size, plot_other_scores, plot_F1_scores)
+    get_input_size, plot_other_scores, plot_F1_scores, save_best_model)
 from BIOINF_tesi.data_pipe.utils import data_augmentation
 from BIOINF_tesi.data_pipe.dataprepare import Data_Prepare, Dataset_Wrap, BalancePos_BatchSampler
 
 
-##### SISTEMAAAA
 
 def fit(model, 
         train_loader, 
         test_loader, 
         criterion, 
         optimizer=None, 
-        num_epochs=50,
-        patience=3,
+        num_epochs=100,
+        patience=6,
         delta=0,
         verbose=True): 
     
@@ -50,6 +50,7 @@ def fit(model,
     num_epochs (int): number of epochs.
     patience (int): number of epochs in which the test error is not anymore decreasing
         before stopping the training.
+        Default:5
     delta (int): minimum decrease in the test error to continue with the training.
         Default:0
     verbose (bool): prints the training error, test error, F1 training score, F1 test score 
@@ -72,7 +73,7 @@ def fit(model,
     # keep track of epoch losses 
     AUPRC_train_scores = []
     AUPRC_test_scores = []
-    AUPRC_precision_recall_test_scores = []
+    F1_precision_recall_test_scores = []
 
     # convert model data type to double
     model = model.double()
@@ -87,7 +88,7 @@ def fit(model,
         
         AUPRC_train = 0.0
         AUPRC_test = 0.0
-       # AUPRC_precision_recall_test = 0.0
+        F1_precision_recall_test = np.zeros(3)
 
     
     # set the model in training modality
@@ -101,7 +102,10 @@ def fit(model,
             # forward pass: compute predicted outputs by passing inputs to the model
             output = model(data.double())
             # calculate the batch loss as the sum of all the losses
-            loss = criterion.double()(output.float(), target.squeeze()) 
+            try:
+                loss = criterion.double()(output.float(), target.squeeze()) 
+            except:
+                loss = criterion.float()(output.float(), target.squeeze()) 
             # backward pass: compute gradient of the loss wrt model parameters
             loss.backward()
             # perform a single optimization step (parameter update)
@@ -119,22 +123,25 @@ def fit(model,
             # forward pass: compute predicted outputs by passing inputs to the model
             output = model(data.double())
             # calculate the batch loss as the sum of all the losses
-            loss = criterion.double()(output.float(), target.squeeze())
+            try:
+                loss = criterion.double()(output.float(), target.squeeze()) 
+            except:
+                loss = criterion.float()(output.float(), target.squeeze()) 
             # update test loss
             test_loss += loss.item()
             # calculate AUPRC test score as a weighted sum of the single AUPRC scores
             AUPRC_test += AUPRC(output,target) 
-           # AUPRC_precision_recall_test += F1_precision_recall(output,target)
+            F1_precision_recall_test += F1_precision_recall(output,target)
         
     
         # calculate epoch score by dividing by the number of observations
         AUPRC_train /= (len(train_loader))
         AUPRC_test /= (len(test_loader))
-       # AUPRC_precision_recall_test /= (len(test_loader))
+        F1_precision_recall_test /= (len(test_loader))
         # store epoch score
         AUPRC_train_scores.append(AUPRC_train)    
         AUPRC_test_scores.append(AUPRC_test)
-        #AUPRC_precision_recall_test_scores.append(AUPRC_precision_recall_test)
+        F1_precision_recall_test_scores.append(F1_precision_recall_test)
           
         # print training/test statistics 
         if verbose == True:
@@ -144,14 +151,14 @@ def fit(model,
     
 
         # early stop the model if the test loss is not improving
-        early_stopping(test_loss, model)
+        early_stopping(test_loss)
         if early_stopping.early_stop:
             print('Early stopping the training')
             break
 
   
     # return the scores at each epoch + the AUPRC, precision and recall
-    return AUPRC_train_scores, AUPRC_test_scores #, AUPRC_precision_recall_test_scores
+    return AUPRC_train_scores, AUPRC_test_scores, F1_precision_recall_test_scores
 
 
 
@@ -219,14 +226,22 @@ class Param_Search():
             self.model = self.model_(trial)
 
         # generate the possible optimizers
-        optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "RMSprop"])
+
+        optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "AdamW", "Adamax"])
+
         lr = trial.suggest_loguniform("lr", 1e-5, 1e-1)
-        optimizer = getattr(optim, optimizer_name)(self.model.parameters(), lr=lr)
+        weight_decay = trial.suggest_loguniform("weight_decay", 1e-4, 1e-1)
+
+        if optimizer_name == 'Nadam':
+            optimizer = getattr(timm.optim , optimizer_name)(self.model.parameters(), lr=lr, weight_decay=weight_decay)
+        else:
+            optimizer = getattr(torch.optim , optimizer_name)(self.model.parameters(), lr=lr, weight_decay=weight_decay)
 
         # convert model data type to double
         self.model = self.model.double()
-
         
+        early_stopping = EarlyStopping(patience=6, verbose=True)
+
         # Define the training and testing phases
         for epoch in tqdm(range(1, self.num_epochs + 1), desc='Epochs'):
             train_loss = 0.0
@@ -277,6 +292,14 @@ class Param_Search():
             # pass the score of the epoch to the study to monitor the intermediate objective values
             trial.report(AUPRC_test, epoch)
 
+            if trial.should_prune():
+                raise optuna.exceptions.TrialPruned()
+
+            early_stopping(test_loss)
+            if early_stopping.early_stop:
+                print('Early stopping the training')
+                break
+
         # save the final model named with the number of the trial 
         with open("{}{}.pickle".format(self.study_name, trial.number), "wb") as fout:
             pickle.dump(self.model, fout)
@@ -290,21 +313,17 @@ class Param_Search():
         """Runs Optuna study and stores the best model in class attribute 'best_model'."""
         
         # create a new study or load a pre-existing study. use sqlite backend to store the study.
-        study = optuna.create_study(study_name=self.study_name, direction="maximize", 
+        study = optuna.create_study(study_name=self.study_name, direction="maximize",
+                                    pruner=optuna.pruners.PatientPruner(optuna.pruners.MedianPruner(), patience=2), 
                                     storage='sqlite:///SA_optuna_tuning.db', load_if_exists=True,
                                     sampler=BoTorchSampler())
         
         complete_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.COMPLETE]
         pruned_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.PRUNED]
         
-        # if the number of already completed trials is lower than the total number of trials passed as
-        #argument, perform the remaining trials 
-        if len(complete_trials)<self.n_trials:
-            # set the number of trials to be performed equal to the number of missing trials
-            self.n_trials -= len(complete_trials)
-            study.optimize(self.objective, n_trials=self.n_trials)
-            pruned_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.PRUNED]
-            complete_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.COMPLETE]
+        study.optimize(self.objective, n_trials=self.n_trials)
+        pruned_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.PRUNED]
+        complete_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.COMPLETE]
             
         # store the best model found in the class
         with open("{}{}.pickle".format(self.study_name, study.best_trial.number), "rb") as fin:
@@ -352,13 +371,15 @@ class Param_Search():
                 del model_param[str(key)]
 
         basepath = 'models' 
-        path = os.path.join(basepath, path + '.pt')
+        path = os.path.join(basepath, path)
 
         torch.save(model_param, path)
 
         return model_param
 
 
+def dd():
+    return defaultdict(list)
 
 
 class Kfold_CV():
@@ -367,13 +388,13 @@ class Kfold_CV():
     
     def __init__(self):
         
-        self.scores_dict = defaultdict(lambda:defaultdict(list))
+        self.scores_dict = defaultdict(dd)
         self.model_ = []
         self.optimizer = []
     
     
     def build_dataloader_forCV(self, X, y, sequence, batch_size, training=True,
-                        augmentation=True, n_neighbors=5):
+                        augmentation=True, type_augm_genfeatures='smote', n_neighbors=5):
 
         if isinstance(X, list):
             for x_ in X:
@@ -389,13 +410,20 @@ class Kfold_CV():
             X.reset_index(drop=True, inplace=True), y.reset_index(drop=True, inplace=True)
 
         if training and augmentation:
-            X, y = data_augmentation(X, y, sequence=sequence, threshold=0.15)
-        wrap = Dataset_Wrap(X, y, sequence=sequence, n_neighbors=n_neighbors)
+            # augment data
+            X, y = data_augmentation(X, y, sequence=sequence, type_augm_genfeatures=type_augm_genfeatures,
+                threshold=0.1)
+
+        # build wrapper
+        wrap = Dataset_Wrap(X, y, sequence=sequence)
         
         if training:    
+            # create balanced dataloader for training set
             return DataLoader(dataset = wrap, 
                        batch_sampler = BalancePos_BatchSampler(wrap, batch_size= batch_size))
+            #return DataLoader(dataset = wrap, batch_size= batch_size, shuffle=True)
         else:
+            # create dataloader for test set
             return DataLoader(dataset = wrap, batch_size= batch_size*2, shuffle=True)
         
         
@@ -406,7 +434,7 @@ class Kfold_CV():
             param_search = Param_Search(model=self.model_, train_loader=train_loader, 
                                         test_loader=test_loader, criterion=self.criterion, 
                                         num_epochs=num_epochs,
-                                        n_trials=3, study_name=study_name) #change to 5
+                                        n_trials=3, study_name=study_name)
 
             param_search.run_trial()
             # retrieve the best trained parameters
@@ -418,10 +446,15 @@ class Kfold_CV():
             self.model_.apply(weight_reset)
 
             lr = best_params['lr']
-            if best_params['optimizer'] == 'Adam':
-                self.optimizer = optim.Adam(self.model_.parameters(), lr=lr)
-            elif best_params['optimizer'] == 'RMSprop':
-                self.optimizer = optim.RMSprop(self.model_.parameters(), lr=lr)
+            weight_decay = best_params['weight_decay']
+            optimizer_name = best_params['optimizer']
+
+            if optimizer_name == 'Nadam':
+                self.optimizer = getattr(timm.optim , optimizer_name)(self.model_.parameters(), lr=lr, weight_decay=weight_decay)
+            else:
+                self.optimizer = getattr(torch.optim , optimizer_name)(self.model_.parameters(), lr=lr, weight_decay=weight_decay)
+
+
                 
             # save the params of the best hp tuning model (for loading in embracenet)
             self.hp_score.append(param_search.trial_value)
@@ -432,17 +465,17 @@ class Kfold_CV():
     def model_testing(self, train_loader, test_loader, num_epochs,
                       test_model_path, n_of_iterarion):
         
-        AUPRC_train, AUPRC_test = fit(model=self.model_, train_loader=train_loader, #OTHER_SCORES
+        AUPRC_train, AUPRC_test, other_scores = fit(model=self.model_, train_loader=train_loader, #OTHER_SCORES
                                     test_loader=test_loader, criterion=self.criterion, 
                                     optimizer=self.optimizer, num_epochs=num_epochs, 
-                                    patience=3, verbose=False)
+                                    patience=6, verbose=False)
             
         self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_train'] = AUPRC_train
         self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_test'] = AUPRC_test
-      #  self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_precision_recall'] = other_scores
+        self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'F1_precision_recall'] = other_scores
             
         print(f'AUPRC test score: {AUPRC_test[-1]}\n\n')
-       # print(f'AUPRC: {other_scores[0]}, Precision: {other_scores[1]}, Recall: {other_scores[2]}')
+        #print(f'F1: {other_scores[0]}, Precision: {other_scores[1]}, Recall: {other_scores[2]}')
             
         # save the params of the best testing model (for loading in embracenet)
         self.avg_score.append(AUPRC_test[-1])
@@ -451,14 +484,15 @@ class Kfold_CV():
     
     
     
-    def run(self,
+    def __call__(self,
             build_dataloader_pipeline, 
             cell_line, 
             sequence=False, 
             model=None,
             augmentation=False,
-            random_state=123,
-            n_folds=3,
+            type_augm_genfeatures='smote',
+            random_state=321,
+            n_folds=4,
             num_epochs=50, 
             batch_size=100,
             study_name=None,
@@ -482,6 +516,8 @@ class Kfold_CV():
         i=1
         for train_index, test_index in kf.split(X):
             
+            study_name = study_name + '_' + str(i)
+
             print(f'>>> ITERATION N. {i}')
             i+=1
             
@@ -497,10 +533,10 @@ class Kfold_CV():
             
             train_loader = self.build_dataloader_forCV(X_train, y_train, sequence=sequence, 
                                                batch_size=batch_size, training=True,
-                                               augmentation=augmentation)
+                                               augmentation=augmentation, type_augm_genfeatures=type_augm_genfeatures)
             test_loader = self.build_dataloader_forCV(X_val, y_val, sequence=sequence, 
                                                batch_size=batch_size, training=False,
-                                               augmentation=augmentation)
+                                               augmentation=False)
             
             self.hyper_tuning(train_loader, test_loader, num_epochs,
                               study_name, hp_model_path)
@@ -510,10 +546,10 @@ class Kfold_CV():
             
             train_loader = self.build_dataloader_forCV([X_train, X_val], [y_train, y_val], sequence=sequence, 
                                                batch_size=batch_size, training=True,
-                                               augmentation=augmentation)
+                                               augmentation=augmentation, type_augm_genfeatures=type_augm_genfeatures)
             test_loader = self.build_dataloader_forCV(X_test, y_test, sequence=sequence, 
                                                batch_size=batch_size, training=False,
-                                               augmentation=augmentation)
+                                               augmentation=False)
             
             self.model_testing(train_loader, test_loader, num_epochs,
                                test_model_path, i)
@@ -521,8 +557,9 @@ class Kfold_CV():
         
         print(f'\n{n_folds}-FOLD CROSS-VALIDATION AUPRC TEST SCORE: {np.round(sum(self.avg_score)/n_folds, 5)}')
             
-    
-    def plot_results(self):
+
+
+def plot_results(self):
         
         for i in self.n_folds:
             print(f'ITERATION N. {i}')

@@ -6,10 +6,10 @@ import numpy as np
 from .utils import size_out_convolution
 
 
-class CNN_LSTM_define_model(nn.Module):
+class CNN_LSTM(nn.Module):
 
     def __init__(self, trial, classes=2):
-        super(CNN_LSTM_define_model, self).__init__()
+        super(CNN_LSTM, self).__init__()
         self.trial = trial
         self.classes = classes
         self.CNN_model = []
@@ -39,10 +39,12 @@ class CNN_LSTM_define_model(nn.Module):
                           
             layers.append( nn.MaxPool1d(kernel_size=maxpool_kernel_size, stride=maxpool_stride) )
 
-            if i==0:
-                layers.append(nn.Dropout(0.3)) 
-            else:
-                layers.append(nn.Dropout(0.4))
+            if i<2:
+                dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.3, 0.4])
+                layers.append(nn.Dropout(dropout))
+            elif i==2:
+                dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.4, 0.5])
+                layers.append(nn.Dropout(dropout))
 
             in_channels = out_channels
             

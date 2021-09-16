@@ -6,6 +6,7 @@ from sklearn.metrics import make_scorer
 from sklearn.metrics import average_precision_score
 from scipy.stats import spearmanr, kruskal, ranksums
 import miceforest as mf
+from imblearn.over_sampling import SMOTE
 
 
 TYPE_TEST = ['wilcoxon_test','kruskal_wallis_test']
@@ -16,6 +17,7 @@ def MICE(X, random_state=100, verbose=False):
     # create object
     kds = mf.KernelDataSet(
         X,
+        mean_match_candidates=10,
         save_all_iterations=False,
         random_state=random_state)
     # run algorithm for 10 iterations and use all the processors
@@ -50,13 +52,16 @@ def kruskal_wallis_test(X, y, kruskal_pval_threshold = 0.05,verbose=False):
     """
         
     uncorrelated = set()
-        
+    
+    if isinstance(y, pd.DataFrame):
+        y=pd.Series(y.values)
+
     pos_index = y[y==1].index
     neg_index = y[y==0].index
         
-    for col in X.columns:
-        pos_samples = X[col][pos_index]
-        neg_samples = X[col][neg_index]
+    for col in X.columns: 
+        pos_samples = X[col].reindex(index = pos_index)
+        neg_samples = X[col].reindex(index = neg_index)
             
         _, p_value = kruskal(pos_samples, neg_samples)
         if p_value > kruskal_pval_threshold:
@@ -90,13 +95,16 @@ def wilcoxon_test(X, y, wilcoxon_pval_threshold = 0.05,verbose=False):
     """
         
     uncorrelated = set()
-        
+    
+    if isinstance(y, pd.DataFrame):
+        y=pd.Series(y.values)
+    
     pos_index = y[y==1].index
     neg_index = y[y==0].index
         
     for col in X.columns:
-        pos_samples = X[col][pos_index]
-        neg_samples = X[col][neg_index]
+        pos_samples = X[col].reindex(index = pos_index)
+        neg_samples = X[col].reindex(index = neg_index)
             
         _, p_value = ranksums(pos_samples, neg_samples)
         if p_value > wilcoxon_pval_threshold:
@@ -118,10 +126,13 @@ def wilcoxon_test_pval(X,y):
     y (pd.Series): label.
     """
     
+    if isinstance(y, pd.DataFrame):
+        y=pd.Series(y.values)
+    
     pos_index = y[y==1].index
     neg_index = y[y==0].index
-    pos_samples = X[pos_index].values
-    neg_samples = X[neg_index].values
+    pos_samples = X.reindex(index = pos_index).values
+    neg_samples = X.reindex(index = neg_index).values
     
     _, p_value = kruskal(pos_samples, neg_samples)
     
@@ -138,10 +149,13 @@ def kruskal_wallis_test_pval(X,y):
     y (pd.Series): label.
     """
     
+    if isinstance(y, pd.DataFrame):
+        y=pd.Series(y.values)
+    
     pos_index = y[y==1].index
     neg_index = y[y==0].index
-    pos_samples = X[pos_index].values
-    neg_samples = X[neg_index].values
+    pos_samples = X.reindex(index = pos_index).values
+    neg_samples = X.reindex(index = neg_index).values
     
     _, p_value = kruskal(pos_samples, neg_samples)
     
@@ -245,6 +259,10 @@ def get_imbalance(y):
     ------------
     y (pd.Series): binary labels.
     """
+
+    if isinstance(y, pd.DataFrame):
+        y=pd.Series(y.values)
+    
     n_pos = y[y==1].count()
     n_neg = y[y==0].count()
     return float(n_pos/n_neg)
@@ -278,6 +296,9 @@ def double_augment(X, y, threshold, imbalance, random_state):
     threshold: desired level of imbalance as ratio.
     """
     
+    if isinstance(y, pd.DataFrame):
+        y=pd.Series(y.values)
+    
     pos_index = y[y==1].index
     X_ = X.iloc[pos_index]
     X_.reset_index(drop=True, inplace=True)
@@ -306,6 +327,9 @@ def reverse_strand_augment(X, y, threshold, imbalance, random_state):
     threshold: desired level of imbalance as ratio.
     """
     
+    if isinstance(y, pd.DataFrame):
+        y=pd.Series(y.values)
+    
     pos_index = y[y==1].index
     X_ = X.iloc[pos_index]
             
@@ -326,7 +350,7 @@ def reverse_strand_augment(X, y, threshold, imbalance, random_state):
 
 
 def data_augmentation(X, y, sequence=False, type_augm_genfeatures='smote', 
-                        threshold=0.15, random_state=123):
+                        threshold=0.1, random_state=123):
     """
     Performs data augmentation. ........ comment
     
@@ -362,7 +386,7 @@ def data_augmentation(X, y, sequence=False, type_augm_genfeatures='smote',
         
         else:
             if type_augm_genfeatures == 'smote':
-                oversample_SMOTE = SMOTE(k_neighbors=3, sampling_strategy = threshold)
+                oversample_SMOTE = SMOTE(k_neighbors=5, sampling_strategy = threshold)
                 X, y = oversample_SMOTE.fit_resample(X, y.ravel())
                 return X.reset_index(drop=True), pd.Series(y)
 

@@ -152,7 +152,7 @@ class Load_Create_Task():
             
             for key in self.enhancers_dict.keys():
                 if key != 'bed':
-                    data_dict[key] = pd.concat([self.enhancers_dict[key], self.promoters_dict[key]])
+                    data_dict[key] = pd.concat([self.enhancers_dict[key], self.promoters_dict[key]]).reset_index(drop=True)
                     if key != 'fa':
                         data_labels_dict[key] = pd.Series( np.concatenate(( self.enhancers_labels_dict[key], self.promoters_labels_dict[key] )) )
             
@@ -169,7 +169,7 @@ class Load_Create_Task():
             for key in self.enhancers_dict.keys():
                 if key not in ['bed', 'fa']:
                     
-                    data = pd.concat([ self.enhancers_dict[key], self.promoters_dict[key] ])
+                    data = pd.concat([ self.enhancers_dict[key], self.promoters_dict[key] ]).reset_index(drop=True)
                     # to retrieve index
                     original_labels = pd.Series( np.concatenate(( 
                                         self.enhancers_labels_dict[key], 
@@ -181,8 +181,8 @@ class Load_Create_Task():
                         )
                     # select only active enhancers and active promoters
                     index = original_labels[original_labels==1].index
-                    data_dict[key] = data.iloc[index].reset_index(drop=True)
-                    data_labels_dict[key] = new_labels.iloc[index].reset_index(drop=True)
+                    data_dict[key] = data.iloc[index]
+                    data_labels_dict[key] = new_labels.iloc[index]
                     # store index of active enhancers and active promoters for every cell line
                     #in order to retrieve later on the correct fa observations
                     data_labels_dict['index_fa'][key] = index
@@ -204,7 +204,7 @@ class Load_Create_Task():
             for key in self.enhancers_dict.keys():
                 if key not in ['bed', 'fa']:
                     
-                    data = pd.concat([ self.enhancers_dict[key], self.promoters_dict[key] ])
+                    data = pd.concat([ self.enhancers_dict[key], self.promoters_dict[key] ]).reset_index(drop=True)
                     # to retrieve index
                     original_labels = pd.Series( np.concatenate(( 
                                         self.enhancers_labels_dict[key], 

@@ -366,10 +366,9 @@ class Dataset_Wrap(Dataset):
         self.neg_index = list(self.X[self.y==0].index)
         
         # fit one-hot encoder
-        self.onehot_encoder = OneHotEncoder(sparse=False).fit(np.array([0,1,2,4]).reshape(-1, 1)) 
+        self.onehot_encoder = OneHotEncoder(sparse=False).fit(np.array(['t', 'g', 'c', 'a']).reshape(-1, 1)) 
 
         # select with equal probability one of the nucleotides
-        bp = random.choice(['a', 'c','g','t'])
 
     def __len__(self):
         return (self.X.shape[0])  
@@ -383,9 +382,11 @@ class Dataset_Wrap(Dataset):
             # all the letters in lowercase
             data = list(data.lower()) 
             # value n corresponds to nan, so we substitute it with a random bp
-            data = [bp if i =='n' else i for i in data]
+            bp = random.choice(['a','c','g','t'])
+            data = [bp if i =='n' else i for i in data] # CHECK!
             # one hot encode
             data = self.onehot_encoder.transform(np.array(data).reshape(-1, 1))
+
             data = data.T
             
         data = torch.tensor(data)
@@ -480,8 +481,8 @@ class Build_DataLoader_Pipeline():
     """
 
     def __init__(self,
-                 data_dict, 
-                 labels_dict,
+                 data_dict=None, 
+                 labels_dict=None,
                  path_name=None,
                  type_test='kruskal_wallis_test',
                  intersection=False, 
@@ -507,8 +508,6 @@ class Build_DataLoader_Pipeline():
         self.transform = False
         self.correlation_with_label = False
         self.correlation_btw_features = False
-        
-        self.index = []
     
         
         # if there exists already the class of preprocessed data, load it
@@ -520,9 +519,9 @@ class Build_DataLoader_Pipeline():
             self.data_class = Data_Prepare(self.data_dict, self.labels_dict)
             self.data_class.transform()
             print('Data transformation Done!\n')
-         #   self.data_class.correlation_with_label(type_test=self.type_test, intersection=self.intersection, verbose=self.verbose)
+            self.data_class.correlation_with_label(type_test=self.type_test, intersection=self.intersection, verbose=self.verbose)
             print('Check correlation with labels Done!\n')
-          #  self.data_class.correlation_btw_features(verbose=self.verbose)  
+            self.data_class.correlation_btw_features(verbose=self.verbose)  
             print('Check correlation between features Done!\n')  
             
             with open(f"data_prepare_class_{self.path_name}", "wb") as fout:
@@ -561,7 +560,7 @@ class Build_DataLoader_Pipeline():
         """
 
         # retrieve the data 
-        X_train, X_test, y_train, y_test, index = self.data_class.return_data(cell_line=cell_line, 
+        X_train, X_test, y_train, y_test = self.data_class.return_data(cell_line=cell_line, 
                                                                           hyper_tuning=hyper_tuning, 
                                                                           sequence=sequence,
                                                                           random_state=random_state,
@@ -569,14 +568,11 @@ class Build_DataLoader_Pipeline():
                                                                           validation_size=validation_size,
                                                                           augmentation=augmentation)
         
-        self.index = index
-        
         train_wrap = Dataset_Wrap(X_train, y_train, sequence=sequence)
         test_wrap = Dataset_Wrap(X_test, y_test, sequence=sequence)
         
         loader_train = DataLoader(dataset = train_wrap, 
-                                  batch_sampler = BalancePos_BatchSampler(train_wrap, batch_size= batch_size),
-                                  random_state=random_state+10)
+                                  batch_sampler = BalancePos_BatchSampler(train_wrap, batch_size= batch_size))
         loader_test = DataLoader(dataset = test_wrap, batch_size= batch_size*2, shuffle=True,
                                     generator = g_gpu.manual_seed(random_state+30))
             
