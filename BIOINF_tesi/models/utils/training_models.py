@@ -19,6 +19,7 @@ from torch.utils.data import Dataset, DataLoader
 import optuna
 import botorch
 from optuna.integration import BoTorchSampler
+from optuna.samplers import TPESampler, RandomSampler
 
 from .utils import (EarlyStopping, F1_precision_recall, AUPRC, size_out_convolution, 
     weight_reset, get_loss_weights_from_dataloader, get_loss_weights_from_labels, 
@@ -166,8 +167,9 @@ def fit(model,
 
 class Param_Search():
 
-    """Performs the hyper parameters tuning by using a TPE (Tree-structured Parzen Estimator) 
-    algorithm sampler.  
+    """Performs the hyper parameters tuning by using an optimiser among 
+    TPE (Tree-structured Parzen Estimator), Bayesian Optimiser and 
+    random sampler.  
     
     Parameters:
     ------------------
@@ -177,6 +179,9 @@ class Param_Search():
     criterion : loss function for training the model.
     num_epochs (int): number of epochs.
     study_name (str): name of the Optuna study object.
+    sampler (str): type of optimiser to use. Possible values are
+        'BO' (bayesian optimiser), TPE (tree-parzen estimatore) and
+        'random' (random sampler).
     n_trial (int): number of trials to perform in the Optuna study.
         Default: 4
     
@@ -196,6 +201,7 @@ class Param_Search():
                criterion,
                num_epochs,
                study_name,
+               sampler='BO',
                n_trials=4
                ):
         self.model_ = copy.deepcopy(model)
@@ -205,6 +211,7 @@ class Param_Search():
         self.num_epochs = num_epochs
         self.study_name = study_name
         self.n_trials = n_trials
+        self.sampler = sampler
         self.best_model = None
 
 
@@ -212,6 +219,13 @@ class Param_Search():
         # FFNN needs also the shape of the input as parameter, 
         # while CNN don't
         self.model_name = model.__name__
+        
+        if sampler = 'BO':
+            self.sampler = BoTorchSampler()
+        elif sampler = 'TPE':
+            self.sampler = TPESampler()
+        elif sampler = 'random':
+            self.sampler = RandomSampler()
     
 
     def objective(self, trial):
@@ -316,7 +330,7 @@ class Param_Search():
         study = optuna.create_study(study_name=self.study_name, direction="maximize",
                                     pruner=optuna.pruners.PatientPruner(optuna.pruners.MedianPruner(), patience=2), 
                                     storage='sqlite:///SA_optuna_tuning.db', load_if_exists=True,
-                                    sampler=BoTorchSampler())
+                                    sampler=self.sampler)
         
         complete_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.COMPLETE]
         pruned_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.PRUNED]
