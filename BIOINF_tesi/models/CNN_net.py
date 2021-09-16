@@ -6,7 +6,7 @@ import numpy as np
 from .utils import size_out_convolution
 
 
-class CNN(nn.Module):
+class CNN(nn.Module): 
 
     def __init__(self, trial, device, classes=2):
         super(CNN, self).__init__()

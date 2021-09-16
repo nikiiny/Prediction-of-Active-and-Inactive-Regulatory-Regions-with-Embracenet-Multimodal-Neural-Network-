@@ -5,7 +5,7 @@ from torch import Tensor
 import numpy as np
 
 
-class FFNN(nn.Module):
+class FFNN(nn.Module): 
 
     def __init__(self, trial, in_features, device, classes=2):
         super(FFNN, self).__init__()

@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import numpy as np
-from .utils import size_out_convolution
+from .utils import size_out_convolution 
 
 
 class CNN_LSTM(nn.Module):
