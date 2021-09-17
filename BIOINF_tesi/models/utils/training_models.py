@@ -37,7 +37,7 @@ def fit(model,
         device,
         optimizer=None, 
         num_epochs=100,
-        patience=6,
+        patience=5,
         delta=0,
         verbose=True): 
     
@@ -265,7 +265,7 @@ class Param_Search():
         # convert model data type to double
         self.model = self.model.double()
         
-        early_stopping = EarlyStopping(patience=6, verbose=True)
+        early_stopping = EarlyStopping(patience=5, verbose=True)
 
         # Define the training and testing phases
         for epoch in tqdm(range(1, self.num_epochs + 1), desc='Epochs'):
@@ -494,7 +494,7 @@ class Kfold_CV():
         AUPRC_train, AUPRC_test, other_scores = fit(model=self.model_, train_loader=train_loader, #OTHER_SCORES
                                     test_loader=test_loader, criterion=self.criterion,
                                     device=device, optimizer=self.optimizer, num_epochs=num_epochs, 
-                                    patience=6, verbose=False)
+                                    patience=5, verbose=False)
             
         self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_train'] = AUPRC_train
         self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_test'] = AUPRC_test
