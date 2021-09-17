@@ -4,7 +4,7 @@ import os
 import re
 import pickle
 #from tqdm.auto import tqdm
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import sqlite3
 from sqlalchemy import create_engine
 from collections import defaultdict
