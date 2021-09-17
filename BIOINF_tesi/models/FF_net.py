@@ -15,7 +15,7 @@ class FFNN(nn.Module):
         self.model = []
         
         # We optimize the number of layers, hidden units and dropout ratio in each layer.
-        n_layers = self.trial.suggest_int("n_layers", 1, 3)
+        n_layers = self.trial.suggest_int("n_layers", 1, 4)
         layers = []
 
         for i in range(n_layers):
@@ -25,6 +25,8 @@ class FFNN(nn.Module):
                 out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [16, 32, 64, 128])
             elif i==2:
                 out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [4, 16, 32, 64])
+            elif i==3:
+                out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [4, 16, 32])
                 
             layers.append(nn.Linear(in_features, out_features))
             layers.append(nn.ReLU())
@@ -32,7 +34,7 @@ class FFNN(nn.Module):
             if i<2:
                 dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.3, 0.4])
                 layers.append(nn.Dropout(dropout))
-            elif i==2:
+            elif i>=2:
                 dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.4, 0.5])
                 layers.append(nn.Dropout(dropout))
                 

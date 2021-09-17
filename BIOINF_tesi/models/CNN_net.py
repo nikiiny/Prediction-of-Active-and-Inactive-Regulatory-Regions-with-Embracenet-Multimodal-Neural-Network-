@@ -21,7 +21,7 @@ class CNN(nn.Module):
         input_size=256
         in_channels = 4
         
-        n_layers = trial.suggest_int("n_layers", 1, 3)
+        n_layers = trial.suggest_int("n_layers", 1, 4)
         layers = []
         
         for i in range(n_layers):
@@ -31,6 +31,8 @@ class CNN(nn.Module):
                 out_channels = trial.suggest_categorical("out_channels_l{}".format(i), [32, 64, 96])
             elif i==2:
                 out_channels = trial.suggest_categorical("out_channels_l{}".format(i), [64, 96, 128, 256])
+            elif i==3:
+                out_channels = trial.suggest_categorical("out_channels_l{}".format(i), [128, 256, 512])
             
             kernel_size = trial.suggest_categorical("kernel_size_l{}".format(i), [5, 11, 15])
             padding = int((kernel_size-1)/2) # same padding
@@ -44,7 +46,7 @@ class CNN(nn.Module):
             if i<2:
                 dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.3, 0.4])
                 layers.append(nn.Dropout(dropout))
-            elif i==2:
+            elif i>=2:
                 dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.4, 0.5])
                 layers.append(nn.Dropout(dropout))
 
