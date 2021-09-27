@@ -32,7 +32,7 @@ class FFNN(nn.Module):
             layers.append(nn.ReLU())
             
             if i<2:
-                dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.3, 0.4])
+                dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.2, 0.3, 0.4])
                 layers.append(nn.Dropout(dropout))
             elif i>=2:
                 dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.4, 0.5])

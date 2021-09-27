@@ -22,7 +22,7 @@ class CNN_LSTM(nn.Module):
         input_size=256
         in_channels = 4
         
-        n_layers = trial.suggest_int("CNN_n_layers", 1, 3)
+        n_layers = trial.suggest_int("CNN_n_layers", 1, 2)
         layers = []
         
         for i in range(n_layers):
@@ -30,8 +30,6 @@ class CNN_LSTM(nn.Module):
                 out_channels = trial.suggest_categorical("CNN_out_channels_l{}".format(i), [16, 32, 64])
             elif i==1:
                 out_channels = trial.suggest_categorical("CNN_out_channels_l{}".format(i), [32, 64, 96])
-            elif i==2:
-                out_channels = trial.suggest_categorical("CNN_out_channels_l{}".format(i), [64, 96, 128, 256])
             
             
             kernel_size = trial.suggest_categorical("kernel_size_l{}".format(i), [5, 11, 15])
@@ -43,10 +41,10 @@ class CNN_LSTM(nn.Module):
                           
             layers.append( nn.MaxPool1d(kernel_size=maxpool_kernel_size, stride=maxpool_stride) )
 
-            if i<2:
-                dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.3, 0.4])
+            if i<1:
+                dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.2, 0.3, 0.4])
                 layers.append(nn.Dropout(dropout))
-            elif i>=2:
+            elif i>=1:
                 dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0, 0.4, 0.5])
                 layers.append(nn.Dropout(dropout))
 

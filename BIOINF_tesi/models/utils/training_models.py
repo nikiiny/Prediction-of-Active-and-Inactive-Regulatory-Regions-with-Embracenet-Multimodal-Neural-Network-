@@ -39,7 +39,8 @@ def fit(model,
         num_epochs=100,
         patience=5,
         delta=0,
-        verbose=True): 
+        verbose=True,
+        checkpoint_path=None): 
     
     """Performs the training of the model. It implements also early stopping
     
@@ -60,6 +61,7 @@ def fit(model,
     verbose (bool): prints the training error, test error, F1 training score, F1 test score 
         at each epoch.
         Default: True
+    checkpoint_path (str): path where the final model and scores will be stored.
     
     Attributes:
     ------------------
@@ -72,101 +74,121 @@ def fit(model,
     Prints training error, test error, F1 training score, F1 test score at each epoch.
     """
 
-    basepath = 'exp'
-
-    # keep track of epoch losses 
-    AUPRC_train_scores = []
-    AUPRC_test_scores = []
-    F1_precision_recall_test_scores = []
-
-    # convert model data type to double
-    model = model.double().to(device)
-
-    # define early stopping
-    early_stopping = EarlyStopping(patience=patience, delta=delta, verbose=True)
+    if os.path.exists(checkpoint_path):
+        checkpoint = torch.load(checkpoint_path)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        AUPRC_train_scores = checkpoint['AUPRC_train_scores']
+        AUPRC_test_scores = checkpoint['AUPRC_test_scores']
+        F1_precision_recall_test_scores = checkpoint['F1_precision_recall_test_scores']
     
+    else:
+
+        # keep track of epoch losses 
+        AUPRC_train_scores, AUPRC_train_scores_pos, AUPRC_train_scores_neg = [],[],[]
+
+        AUPRC_test_scores, AUPRC_test_scores_pos, AUPRC_test_scores_neg = [],[],[]
+
+        F1_precision_recall_test_scores = []
     
-    for epoch in tqdm(range(1, num_epochs + 1), desc='Epochs'):
-        train_loss = 0.0
-        test_loss = 0.0
-        
-        AUPRC_train = 0.0
-        AUPRC_test = 0.0
-        F1_precision_recall_test = np.zeros(3)
+        # convert model data type to double
+        model = model.double().to(device)
 
-    
-    # set the model in training modality
-        model.train()
+        # define early stopping
+        early_stopping = EarlyStopping(patience=patience, delta=delta, verbose=True)
 
-        for data, target in train_loader:
-        
-            target.to(device)
-            data.to(device)
-            
-            target = target.reshape(-1)
-            # clear the gradients of all optimized variables
-            optimizer.zero_grad()
-            # forward pass: compute predicted outputs by passing inputs to the model
-            output = model(data.double())
-            # calculate the batch loss as the sum of all the losses
-            try:
-                loss = criterion.double()(output.float(), target.squeeze()) 
-            except:
-                loss = criterion.float()(output.float(), target.squeeze()) 
-            # backward pass: compute gradient of the loss wrt model parameters
-            loss.backward()
-            # perform a single optimization step (parameter update)
-            optimizer.step()
-            # update training loss
-            train_loss += loss.item()
-            # calculate AUPRC training score as a weighted sum of the single AUPRC scores
-            AUPRC_train += AUPRC(output,target)
+        for epoch in tqdm(range(1, num_epochs + 1), desc='Epochs'):
+            train_loss = 0.0
+            test_loss = 0.0
 
-        
-        # set the model in testing modality
-        model.eval()
-        for data, target in test_loader:
-            
-            target.to(device)
-            data.to(device)
+            AUPRC_train = 0.0
+            AUPRC_test = 0.0
+            F1_precision_recall_test = np.zeros(3)
 
-            # forward pass: compute predicted outputs by passing inputs to the model
-            output = model(data.double())
-            # calculate the batch loss as the sum of all the losses
-            try:
-                loss = criterion.double()(output.float(), target.squeeze()) 
-            except:
-                loss = criterion.float()(output.float(), target.squeeze()) 
-            # update test loss
-            test_loss += loss.item()
-            # calculate AUPRC test score as a weighted sum of the single AUPRC scores
-            AUPRC_test += AUPRC(output,target) 
-            F1_precision_recall_test += F1_precision_recall(output,target)
-        
-    
-        # calculate epoch score by dividing by the number of observations
-        AUPRC_train /= (len(train_loader))
-        AUPRC_test /= (len(test_loader))
-        F1_precision_recall_test /= (len(test_loader))
-        # store epoch score
-        AUPRC_train_scores.append(AUPRC_train)    
-        AUPRC_test_scores.append(AUPRC_test)
-        F1_precision_recall_test_scores.append(F1_precision_recall_test)
-          
-        # print training/test statistics 
-        if verbose == True:
-            print('Epoch: {} \tTraining AUPRC score: {:.4f} \tTest AUPRC score: {:.4f} \tTraining Loss: {:.4f} \tTest Loss: {:.4f}'.format(
-                epoch, AUPRC_train, AUPRC_test, train_loss, test_loss))
-    
-    
 
-        # early stop the model if the test loss is not improving
-        early_stopping(test_loss)
-        if early_stopping.early_stop:
-            print('Early stopping the training')
-            break
+        # set the model in training modality
+            model.train()
 
-  
+            for data, target in train_loader:
+
+                target.to(device)
+                data.to(device)
+
+                target = target.reshape(-1)
+                # clear the gradients of all optimized variables
+                optimizer.zero_grad()
+                # forward pass: compute predicted outputs by passing inputs to the model
+                output = model(data.double())
+                # calculate the batch loss as the sum of all the losses
+                try:
+                    loss = criterion.double().to(device)(output.float(), target.squeeze()) 
+                except:
+                    loss = criterion.float().to(device)(output.float(), target.squeeze()) 
+                # backward pass: compute gradient of the loss wrt model parameters
+                loss.backward()
+                # perform a single optimization step (parameter update)
+                optimizer.step()
+                # update training loss
+                train_loss += loss.item()
+                # calculate AUPRC training score as a weighted sum of the single AUPRC scores
+                auprc = AUPRC(output,target)
+                AUPRC_train += auprc
+
+
+            # set the model in testing modality
+            model.eval()
+            for data, target in test_loader:
+
+                target.to(device)
+                data.to(device)
+
+                # forward pass: compute predicted outputs by passing inputs to the model
+                output = model(data.double())
+                # calculate the batch loss as the sum of all the losses
+                try:
+                    loss = criterion.double().to(device)(output.float(), target.squeeze()) 
+                except:
+                    loss = criterion.float().to(device)(output.float(), target.squeeze())
+                # update test loss
+                test_loss += loss.item()
+                # calculate AUPRC test score as a weighted sum of the single AUPRC scores
+                auprc = AUPRC(output,target)
+                AUPRC_test += auprc
+
+                F1_precision_recall_test += F1_precision_recall(output,target)
+
+
+            # calculate epoch score by dividing by the number of observations
+            AUPRC_train /= (len(train_loader))
+            AUPRC_test /= (len(test_loader))
+
+            F1_precision_recall_test /= (len(test_loader))
+            # store epoch score
+            AUPRC_train_scores.append(AUPRC_train) 
+            AUPRC_test_scores.append(AUPRC_test)
+
+            F1_precision_recall_test_scores.append(F1_precision_recall_test)
+
+            # print training/test statistics 
+            if verbose == True:
+                print('Epoch: {} \tTraining AUPRC score: {:.4f} \tTest AUPRC score: {:.4f} \tTraining Loss: {:.4f} \tTest Loss: {:.4f}'.format(
+                    epoch, AUPRC_train, AUPRC_test, train_loss, test_loss))
+
+
+
+            # early stop the model if the test loss is not improving
+            early_stopping(AUPRC_test)
+            if early_stopping.early_stop:
+                print('Early stopping the training')
+                break
+
+    if checkpoint_path:
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'AUPRC_train_scores': AUPRC_train_scores,
+            'AUPRC_test_scores': AUPRC_test_scores,
+            'F1_precision_recall_test_scores': F1_precision_recall_test_scores
+        }, checkpoint_path)
+
     # return the scores at each epoch + the AUPRC, precision and recall
     return AUPRC_train_scores, AUPRC_test_scores, F1_precision_recall_test_scores
 
@@ -221,7 +243,6 @@ class Param_Search():
         self.num_epochs = num_epochs
         self.study_name = study_name
         self.device = device
-        self.sampler = sampler
         self.n_trials = n_trials
         self.best_model = None
 
@@ -252,7 +273,7 @@ class Param_Search():
 
         # generate the possible optimizers
 
-        optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "AdamW", "Adamax"])
+        optimizer_name = trial.suggest_categorical("optimizer", ["Nadam", "Adam", "RMSprop"])
 
         lr = trial.suggest_loguniform("lr", 1e-5, 1e-1)
         weight_decay = trial.suggest_loguniform("weight_decay", 1e-4, 1e-1)
@@ -321,7 +342,7 @@ class Param_Search():
             if trial.should_prune():
                 raise optuna.exceptions.TrialPruned()
 
-            early_stopping(test_loss)
+            early_stopping(AUPRC_test)
             if early_stopping.early_stop:
                 print('Early stopping the training')
                 break
@@ -341,15 +362,21 @@ class Param_Search():
         # create a new study or load a pre-existing study. use sqlite backend to store the study.
         study = optuna.create_study(study_name=self.study_name, direction="maximize",
                                     pruner=optuna.pruners.PatientPruner(optuna.pruners.MedianPruner(), patience=2), 
-                                    storage='sqlite:///SA_optuna_tuning.db', load_if_exists=True,
+                                    storage=f'sqlite:///SA_optuna_tuning.db', load_if_exists=True,
                                     sampler=self.sampler)
         
         complete_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.COMPLETE]
         pruned_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.PRUNED]
-        
-        study.optimize(self.objective, n_trials=self.n_trials)
-        pruned_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.PRUNED]
-        complete_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.COMPLETE]
+            
+        # if the number of already completed trials is lower than the total number of trials passed as
+        #argument, perform the remaining trials 
+        if len(complete_trials)<self.n_trials:
+            # set the number of trials to be performed equal to the number of missing trials
+            self.n_trials -= len(complete_trials)
+            study.optimize(self.objective, n_trials=self.n_trials)
+            pruned_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.PRUNED]
+            complete_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.COMPLETE]
+            
             
         # store the best model found in the class
         with open("{}{}.pickle".format(self.study_name, study.best_trial.number), "rb") as fin:
@@ -489,15 +516,18 @@ class Kfold_CV():
     
     
     def model_testing(self, train_loader, test_loader, num_epochs,
-                      test_model_path, device, n_of_iterarion):
+                      test_model_path, device, n_of_iterarion, checkpoint_path=None):
         
-        AUPRC_train, AUPRC_test, other_scores = fit(model=self.model_, train_loader=train_loader, #OTHER_SCORES
+        AUPRC_train, AUPRC_test, other_scores = fit(model=self.model_, 
+                                    train_loader=train_loader, #OTHER_SCORES
                                     test_loader=test_loader, criterion=self.criterion,
                                     device=device, optimizer=self.optimizer, num_epochs=num_epochs, 
-                                    patience=5, verbose=False)
+                                    patience=5, verbose=False, 
+                                    checkpoint_path=checkpoint_path)
             
         self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_train'] = AUPRC_train
         self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_test'] = AUPRC_test
+
         self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'F1_precision_recall'] = other_scores
             
         print(f'AUPRC test score: {AUPRC_test[-1]}\n\n')
@@ -514,9 +544,10 @@ class Kfold_CV():
             build_dataloader_pipeline, 
             cell_line,
             device,
+            task=None,
             sequence=False, 
             model=None,
-            augmentation=False,
+            augmentation=True,
             type_augm_genfeatures='smote',
             random_state=321,
             n_folds=4,
@@ -538,8 +569,13 @@ class Kfold_CV():
                                                       n_folds=n_folds, random_state=random_state)
         
         w_pos,w_neg = get_loss_weights_from_labels(y)
-        self.criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_pos,w_neg]))
-            
+
+        if w_neg<0.1:
+            w_pos=0.9
+            w_neg=0.1
+
+        self.criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_neg, w_neg]))
+
         
         i=1
         for train_index, test_index in kf.split(X):
@@ -547,7 +583,6 @@ class Kfold_CV():
             study_name = study_name + '_' + str(i)
 
             print(f'>>> ITERATION N. {i}')
-            i+=1
             
             X_train, X_test = X.iloc[train_index], X.iloc[test_index]
             y_train, y_test = y.iloc[train_index], y.iloc[test_index]
@@ -580,10 +615,14 @@ class Kfold_CV():
                                                augmentation=False)
             
             self.model_testing(train_loader, test_loader, num_epochs,
-                               test_model_path, device, i)
+                               test_model_path, device, i, checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{i}_test')
+            
+            i+=1
                 
         
-        print(f'\n{n_folds}-FOLD CROSS-VALIDATION AUPRC TEST SCORE: {np.round(sum(self.avg_score)/n_folds, 5)}')
+        avg_CV_AUPRC = np.round(sum(self.avg_score)/n_folds, 5)
+        self.scores_dict['average_CV_AUPRC'] = avg_CV_AUPRC
+        print(f'\n{n_folds}-FOLD CROSS-VALIDATION AUPRC TEST SCORE: {avg_CV_AUPRC}')
             
 
 
@@ -596,8 +635,4 @@ def plot_results(self):
             
             
             #plot_other_scores(self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_precision_recall'])
-    
-    
-
-
     

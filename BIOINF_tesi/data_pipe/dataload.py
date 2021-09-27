@@ -174,12 +174,26 @@ class Load_Create_Task():
                     original_labels = pd.Series( np.concatenate(( 
                                         self.enhancers_labels_dict[key], 
                                         self.promoters_labels_dict[key] )) )
-                    # enhancers have label 1, promoters have label 0  
-                    new_labels = pd.Series( 
-                            np.concatenate(( np.repeat(1, self.enhancers_dict[key].shape[0]), 
-                                            np.repeat(0, self.promoters_dict[key].shape[0]) ))
-                        )
-                    # select only active enhancers and active promoters
+                    
+                    # assign label 1 to the minority class and 0 to the majority one
+                    if self.enhancers_dict[key].shape[0] <= self.promoters_dict[key].shape[0]:
+                        print('Minority class: active enhancers')
+
+                        data = pd.concat([ self.enhancers_dict[key], self.promoters_dict[key] ]).reset_index(drop=True)
+                        new_labels = pd.Series( 
+                                np.concatenate(( np.repeat(1, self.enhancers_dict[key].shape[0]), 
+                                                np.repeat(0, self.promoters_dict[key].shape[0]) ))
+                            )
+                    else:
+                        print('Minority class: active promoters')
+
+                        data = pd.concat([ self.promoters_dict[key], self.enhancers_dict[key] ]).reset_index(drop=True)
+                        new_labels = pd.Series( 
+                                np.concatenate(( np.repeat(0, self.enhancers_dict[key].shape[0]),
+                                                np.repeat(1, self.promoters_dict[key].shape[0]) ))
+                            )
+
+                        # select only active enhancers and active promoters
                     index = original_labels[original_labels==1].index
                     data_dict[key] = data.iloc[index]
                     data_labels_dict[key] = new_labels.iloc[index]
@@ -209,11 +223,24 @@ class Load_Create_Task():
                     original_labels = pd.Series( np.concatenate(( 
                                         self.enhancers_labels_dict[key], 
                                         self.promoters_labels_dict[key] )) )
-                    # enhancers have label 1, promoters have label 0
-                    new_labels = pd.Series( 
-                            np.concatenate(( np.repeat(1, self.enhancers_dict[key].shape[0]), 
-                                            np.repeat(0, self.promoters_dict[key].shape[0]) ))
-                        )
+                   
+                   # assign label 1 to the minority class and 0 to the majority one
+                    if self.enhancers_dict[key].shape[0] <= self.promoters_dict[key].shape[0]:
+                        print('Minority class: inactive enhancers')
+
+                        data = pd.concat([ self.enhancers_dict[key], self.promoters_dict[key] ]).reset_index(drop=True)
+                        new_labels = pd.Series( 
+                                np.concatenate(( np.repeat(1, self.enhancers_dict[key].shape[0]), 
+                                                np.repeat(0, self.promoters_dict[key].shape[0]) ))
+                            )
+                    else:
+                        print('Minority class: inactive promoters')
+
+                        data = pd.concat([ self.promoters_dict[key], self.enhancers_dict[key] ]).reset_index(drop=True)
+                        new_labels = pd.Series( 
+                                np.concatenate(( np.repeat(0, self.enhancers_dict[key].shape[0]),
+                                                np.repeat(1, self.promoters_dict[key].shape[0]) ))
+                            )
                     
                     # select only inactive enhancers and inactive promoters
                     index = original_labels[original_labels==0].index

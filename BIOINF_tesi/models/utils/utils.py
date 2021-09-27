@@ -201,8 +201,9 @@ def accuracy(output, target):
 def AUPRC(output, target):
     pred = torch.argmax(output, dim=1).cpu().detach().numpy()
     target = target.cpu().detach().numpy()
-
-    return average_precision_score(target, pred)
+    res = average_precision_score(target, pred) 
+    
+    return res if not np.isnan(res) else 0
 
 
 def F1_precision_recall(output, target):

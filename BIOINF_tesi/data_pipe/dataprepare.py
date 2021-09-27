@@ -292,6 +292,15 @@ class Data_Prepare():
             return kf, self.data_dict[cell_line].copy(), self.labels_dict[cell_line].copy()
 
 
+    def set_labels_value(self):
+
+        for key in self.labels_dict.keys():
+                if key != 'fa':
+
+                    correlated_pairs = spearman_corr(self.data_dict[key], self.spearman_corr_threshold, verbose=verbose)
+                    self.data_dict[key] =  remove_correlated_features(self.data_dict[key], self.labels_dict[key], 
+                                                                      correlated_pairs, type_test=type_test, verbose=verbose)
+                    
 
 
     def return_data(self, 
