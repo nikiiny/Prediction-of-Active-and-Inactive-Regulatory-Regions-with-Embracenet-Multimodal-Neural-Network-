@@ -329,7 +329,6 @@ class Param_Search():
                     loss = self.criterion.float().to(self.device)(output.float().to(self.device), target.squeeze().to(self.device)) 
                 # update test loss 
                 test_loss += loss.item()
-                # calculate AUPRC test score as weighted sum of the single AUPRC scores
                 AUPRC_test += AUPRC(output,target)
                 
 
@@ -337,6 +336,7 @@ class Param_Search():
             AUPRC_test /= (len(self.test_loader))
         
             # pass the score of the epoch to the study to monitor the intermediate objective values
+            #trial.report(AUPRC_test, epoch) CHANGE
             trial.report(AUPRC_test, epoch)
 
             if trial.should_prune():
@@ -444,6 +444,7 @@ class Kfold_CV():
         self.scores_dict = defaultdict(dd)
         self.model_ = []
         self.optimizer = []
+        self.empty=''
     
     
     def build_dataloader_forCV(self, X, y, sequence, batch_size, training=True,
@@ -512,7 +513,7 @@ class Kfold_CV():
             # save the params of the best hp tuning model (for loading in embracenet)
             self.hp_score.append(param_search.trial_value)
             if param_search.trial_value == max(self.hp_score):
-                param_search.save_best_model(hp_model_path) 
+                param_search.save_best_model(f'{hp_model_path}_{self.type_augm_genfeatures if self.augmentation and not self.sequence else self.empty}.pt') 
     
     
     def model_testing(self, train_loader, test_loader, num_epochs,
@@ -523,7 +524,7 @@ class Kfold_CV():
                                     test_loader=test_loader, criterion=self.criterion,
                                     device=device, optimizer=self.optimizer, num_epochs=num_epochs, 
                                     patience=5, verbose=False, 
-                                    checkpoint_path=checkpoint_path)
+                                    checkpoint_path=f'{checkpoint_path}_{self.type_augm_genfeatures if self.augmentation and not self.sequence else self.empty}')
             
         self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_train'] = AUPRC_train
         self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_test'] = AUPRC_test
@@ -536,7 +537,7 @@ class Kfold_CV():
         # save the params of the best testing model (for loading in embracenet)
         self.avg_score.append(AUPRC_test[-1])
         if AUPRC_test[-1] == max(self.avg_score):
-                save_best_model(self.model_, test_model_path) 
+                save_best_model(self.model_, f'{test_model_path}_{self.type_augm_genfeatures if self.augmentation and not self.sequence else self.empty}.pt') 
     
     
     
@@ -547,7 +548,7 @@ class Kfold_CV():
             task=None,
             sequence=False, 
             model=None,
-            augmentation=True,
+            augmentation=False,
             type_augm_genfeatures='smote',
             random_state=321,
             n_folds=4,
@@ -560,6 +561,9 @@ class Kfold_CV():
             ):
         
         self.n_folds = n_folds
+        self.type_augm_genfeatures = type_augm_genfeatures
+        self.augmentation = augmentation
+        self.sequence = sequence
     
         self.avg_score = []
         self.hp_score = []
