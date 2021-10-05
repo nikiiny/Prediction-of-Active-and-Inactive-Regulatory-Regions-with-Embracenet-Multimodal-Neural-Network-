@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import os
 import re
-import pickle
 #from tqdm.auto import tqdm
 from tqdm.auto import tqdm
 import sqlite3
@@ -27,7 +26,6 @@ from .utils import (EarlyStopping, F1_precision_recall, AUPRC, size_out_convolut
     get_input_size, plot_other_scores, plot_F1_scores, save_best_model)
 from BIOINF_tesi.data_pipe.utils import data_augmentation
 from BIOINF_tesi.data_pipe.dataprepare import Data_Prepare, Dataset_Wrap, BalancePos_BatchSampler
-
 
 
 def fit(model, 
@@ -75,7 +73,7 @@ def fit(model,
     """
 
     if os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path)
+        checkpoint = torch.load(checkpoint_path, map_location=torch.device(device))
         model.load_state_dict(checkpoint['model_state_dict'])
         AUPRC_train_scores = checkpoint['AUPRC_train_scores']
         AUPRC_test_scores = checkpoint['AUPRC_test_scores']
@@ -350,8 +348,7 @@ class Param_Search():
                 break
 
         # save the final model named with the number of the trial 
-        with open("{}{}.pickle".format(self.study_name, trial.number), "wb") as fout:
-            pickle.dump(self.model, fout)
+        torch.save(self.model, f'{self.study_name}{trial.number}.pt')
         
         # return AUPRC score to the study
         return AUPRC_test
@@ -380,9 +377,8 @@ class Param_Search():
             complete_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.COMPLETE]
             
             
-        # store the best model found in the class
-        with open("{}{}.pickle".format(self.study_name, study.best_trial.number), "rb") as fin:
-            best_model = pickle.load(fin)
+        # load the best model found in the class
+        best_model = torch.load(f'{self.study_name}{study.best_trial.number}.pt', torch.device(self.device)) 
 
         self.best_model = best_model
 
@@ -399,7 +395,7 @@ class Param_Search():
 
         print("  Params: ")
         for key, value in trial.params.items():
-            print("    {}: {}".format(key, value))
+            print(f"    {key}: {value}")
 
         self.best_params = trial.params
         self.trial_value = trial.value

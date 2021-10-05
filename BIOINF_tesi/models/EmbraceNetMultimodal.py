@@ -152,7 +152,7 @@ class EmbraceNetMultimodal(nn.Module):
         
         
         # 3) post embracement layers
-        n_post_layers = self.trial.suggest_int("n_post_layers", 1, 3)
+        n_post_layers = self.trial.suggest_int("n_post_layers", 1, 2) #3
         post_layers = []
 
         for i in range(n_post_layers):

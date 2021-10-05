@@ -250,8 +250,6 @@ def get_loss_weights_from_labels(label):
     return pos_inv/(neg_inv+pos_inv), neg_inv/(neg_inv+pos_inv)
 
 
-
-
 def size_out_convolution(input_size, kernel, padding, stride):
     """Calculates and returns the size of input after a convolution"""
     return int(( (input_size + 2*padding - kernel)/stride )+1)
@@ -314,3 +312,74 @@ def drop_last_layers(model_state_dict, network_type):
                 del model_state_dict[k]
                 
     return model_state_dict
+
+
+
+
+def select_augmented_models(results_dict, verbose=False):
+
+    d=defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+
+    for cell in results_dict.keys():
+        for task in results_dict[cell]:
+            if len(results_dict[cell][task].keys())>1:
+                for type_augm in results_dict[cell][task].keys():
+                    d[cell][task][type_augm]=[]
+                    for iterat in results_dict[cell][task][type_augm]:
+                        if iterat.startswith('iteration'):
+                            d[cell][task][type_augm].append(results_dict[cell][task][type_augm][iterat]['AUPRC_test'][-1])
+
+    for cell in d.keys():
+        for task in d[cell].keys():
+            pval = ranksums(d[cell][task]['FFNN_smote'], d[cell][task]['FFNN_double'])[1]
+            if verbose:
+                print(f'\n{cell}')
+                print(task)
+                print(f'pvalue: {pval}')
+
+            if pval<0.3 and results_dict[cell][task]['FFNN_smote']['average_CV_AUPRC'] >= results_dict[cell][task]['FFNN_double']['average_CV_AUPRC']:
+                    results_dict[cell][task]['FFNN'] = results_dict[cell][task]['FFNN_smote']
+                    os.rename(f'models/{cell}_{task}_FFNN_smote_TEST.pt', 
+                              f'models/{cell}_{task}_FFNN_TEST.pt')
+                    if verbose:
+                        print('Best augmentation method: smote')
+            else:
+                results_dict[cell][task]['FFNN'] = results_dict[cell][task]['FFNN_double']
+                os.rename(f'models/{cell}_{task}_FFNN_double_TEST.pt', 
+                              f'models/{cell}_{task}_FFNN_TEST.pt')
+                    
+                if verbose:
+                    print('Best augmentation method: double')
+
+
+
+
+def select_best_model(results_dict, model_1, model_2, verbose=False):
+    d=defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+
+    for cell in results_dict.keys():
+        for task in results_dict[cell]:
+            if len(results_dict[cell][task].keys())>1:
+                for model in [model_1.__name__, model_2.__name__]:
+                    d[cell][task][model]=[]
+                    for iterat in results_dict[cell][task][model]:
+                        if iterat.startswith('iteration'):
+                            d[cell][task][model].append(results_dict[cell][task][model][iterat]['AUPRC_test'][-1])
+
+    return d
+    for cell in d.keys():
+        for task in d[cell].keys():
+            pval = ranksums(d[cell][task][model_1.__name__], d[cell][task][model_2.__name__])[1]
+            if verbose:
+                print(f'\n{cell}')
+                print(task)
+                print(f'pvalue: {pval}')
+
+            if pval<0.3 and results_dict[cell][task][model_2.__name__]['average_CV_AUPRC'] >= results_dict[cell][task][model_1.__name__]['average_CV_AUPRC']:
+                if verbose:
+                    print(f'Best model: {model_2.__name__}')
+                    return model_2
+            else:   
+                if verbose:
+                    print(f'Best model: {model_1.__name__}')
+                    return model_1

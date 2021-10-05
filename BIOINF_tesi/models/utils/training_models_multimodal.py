@@ -664,8 +664,7 @@ class Kfold_CV_Multimodal():
             test_loader['CNN'] = self.build_dataloader_forCV(X_val_2, y_val, sequence=True,
                                                batch_size=batch_size, training=False,
                                                augmentation=False) 
-            self.train_loader = train_loader
-            self.test_loader = test_loader
+
             
             self.hyper_tuning(train_loader, test_loader, num_epochs, cell_line, task,
                               study_name, hp_model_path, device, sampler)
@@ -685,7 +684,7 @@ class Kfold_CV_Multimodal():
             test_loader['FFNN'] = self.build_dataloader_forCV(X_test_1, y_test, sequence=False, 
                                                batch_size=batch_size, training=False,
                                                augmentation=False)
-            test_loader['CNN'] = self.build_dataloader_forCV(X_test_1, y_test, sequence=True, 
+            test_loader['CNN'] = self.build_dataloader_forCV(X_test_2, y_test, sequence=True, 
                                                batch_size=batch_size, training=False,
                                                augmentation=False)
 
