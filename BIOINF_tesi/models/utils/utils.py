@@ -101,9 +101,9 @@ def save_best_model(model, path):
     """
     
     model_param = model.state_dict()
-    for key,value in model_param.copy().items():
-      if re.findall('last', key):
-        del model_param[str(key)]
+ #   for key,value in model_param.copy().items():
+  #    if re.findall('last', key):
+   #     del model_param[str(key)]
 
     basepath = 'models'
     basepath = basepath 
@@ -201,8 +201,9 @@ def accuracy(output, target):
 def AUPRC(output, target):
     pred = torch.argmax(output, dim=1).cpu().detach().numpy()
     target = target.cpu().detach().numpy()
-
-    return average_precision_score(target, pred)
+    res = average_precision_score(target, pred) 
+    
+    return res if not np.isnan(res) else 0
 
 
 def F1_precision_recall(output, target):
@@ -265,3 +266,51 @@ def get_input_size(data_loader):
     break
   return input_size
 
+
+def output_size_from_model_params(model_params):
+    
+    n_layers = model_params['n_layers']
+    input_size=256
+    tot_channels=1
+
+    for i in range(n_layers):
+        kernel_size = model_params[f'kernel_size_l{i}']
+        padding = int((kernel_size-1)/2)
+
+        maxpool_kernel_size = 10
+        maxpool_stride = 2
+
+        output_size = size_out_convolution(input_size, kernel_size , padding, 1)
+        output_size = size_out_convolution(output_size, maxpool_kernel_size, 0, maxpool_stride)
+        input_size=output_size
+
+        tot_channels*=model_params[f'out_channels_l{i}']
+        
+    return output_size*tot_channels
+
+
+
+def selection_probabilities(results_dict, cell_line, task, batch_size):
+    
+    AUPRC_FFNN = results_dict[cell_line][task]['FFNN']['average_CV_AUPRC']
+    AUPRC_CNN = results_dict[cell_line][task]['CNN']['average_CV_AUPRC']
+    prob = torch.tensor([AUPRC_FFNN,AUPRC_CNN])
+    prob = prob.repeat(batch_size,1)
+    
+    return prob
+
+
+
+def drop_last_layers(model_state_dict, network_type):
+    
+    if network_type=='FFNN':
+        keys = list(model_state_dict.keys())[-2:]
+        for k in keys:
+            del model_state_dict[k]
+    
+    elif network_type=='CNN':
+        for k in model_state_dict.copy().keys():
+            if k.startswith('last'):
+                del model_state_dict[k]
+                
+    return model_state_dict

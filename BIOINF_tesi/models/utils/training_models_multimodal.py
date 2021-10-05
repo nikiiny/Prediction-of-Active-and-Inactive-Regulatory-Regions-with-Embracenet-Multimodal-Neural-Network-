@@ -24,17 +24,19 @@ from optuna.samplers import TPESampler, RandomSampler
 
 from .utils import (EarlyStopping, F1_precision_recall, AUPRC, size_out_convolution, 
     weight_reset, get_loss_weights_from_dataloader, get_loss_weights_from_labels, 
-    get_input_size, plot_other_scores, plot_F1_scores, save_best_model)
+    get_input_size, plot_other_scores, plot_F1_scores, save_best_model, selection_probabilities)
 from BIOINF_tesi.data_pipe.utils import data_augmentation
 from BIOINF_tesi.data_pipe.dataprepare import Data_Prepare, Dataset_Wrap, BalancePos_BatchSampler
 
 
 
-def fit(model, 
+def fit_multimodal(model, 
         train_loader, 
         test_loader, 
         criterion,
         device,
+        cell_line,
+        task,
         optimizer=None, 
         num_epochs=100,
         patience=5,
@@ -75,13 +77,17 @@ def fit(model,
     """
 
     if os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path)
+        checkpoint = torch.load(checkpoint_path, map_location=torch.device(device))
         model.load_state_dict(checkpoint['model_state_dict'])
         AUPRC_train_scores = checkpoint['AUPRC_train_scores']
         AUPRC_test_scores = checkpoint['AUPRC_test_scores']
         F1_precision_recall_test_scores = checkpoint['F1_precision_recall_test_scores']
     
     else:
+
+        with open ('results_dict.pickle', 'rb') as fin:
+            results_dict = pickle.load(fin)
+            results_dict = defaultdict(lambda: defaultdict(dict), results_dict)
 
         # keep track of epoch losses 
         AUPRC_train_scores, AUPRC_train_scores_pos, AUPRC_train_scores_neg = [],[],[]
@@ -108,16 +114,21 @@ def fit(model,
         # set the model in training modality
             model.train()
 
-            for data, target in train_loader:
+            for load1, load2 in zip(train_loader['FFNN'],
+                                          train_loader['CNN']):
+                x_1, target = load1
+                x_2, _ = load2
+                assert(len(x_1)==len(x_2))
 
-                target.to(device)
-                data.to(device)
+                selection_probabilities_ = selection_probabilities(results_dict, cell_line, 
+                                                                    task, len(x_1)) #giusto batcj_sisze?
 
                 target = target.reshape(-1)
                 # clear the gradients of all optimized variables
                 optimizer.zero_grad()
                 # forward pass: compute predicted outputs by passing inputs to the model
-                output = model(data.double())
+                output = model([x_1.double(), x_2.double()], selection_probabilities=selection_probabilities_,
+                    is_training=True)
                 # calculate the batch loss as the sum of all the losses
                 try:
                     loss = criterion.double().to(device)(output.float(), target.squeeze()) 
@@ -136,13 +147,17 @@ def fit(model,
 
             # set the model in testing modality
             model.eval()
-            for data, target in test_loader:
+            for load1, load2 in zip(test_loader['FFNN'],
+                                          test_loader['CNN']):
+                x_1, target = load1
+                x_2, _, = load2
+                assert(len(x_1)==len(x_2))
 
-                target.to(device)
-                data.to(device)
+                selection_probabilities_ = selection_probabilities(results_dict, cell_line, 
+                                                                    task, len(x_1)) #giusto batcj_sisze?
 
                 # forward pass: compute predicted outputs by passing inputs to the model
-                output = model(data.double())
+                output = model([x_1.double(), x_2.double()], selection_probabilities=selection_probabilities_)
                 # calculate the batch loss as the sum of all the losses
                 try:
                     loss = criterion.double().to(device)(output.float(), target.squeeze()) 
@@ -158,10 +173,10 @@ def fit(model,
 
 
             # calculate epoch score by dividing by the number of observations
-            AUPRC_train /= (len(train_loader))
-            AUPRC_test /= (len(test_loader))
+            AUPRC_train /= (len(train_loader['FFNN']))
+            AUPRC_test /= (len(test_loader['FFNN']))
 
-            F1_precision_recall_test /= (len(test_loader))
+            F1_precision_recall_test /= (len(test_loader['FFNN']))
             # store epoch score
             AUPRC_train_scores.append(AUPRC_train) 
             AUPRC_test_scores.append(AUPRC_test)
@@ -196,7 +211,7 @@ def fit(model,
 
 
 
-class Param_Search():
+class Param_Search_Multimodal():
 
     """Performs the hyper parameters tuning by using an optimiser among 
     TPE (Tree-structured Parzen Estimator), Bayesian Optimiser and 
@@ -233,6 +248,8 @@ class Param_Search():
                num_epochs,
                study_name,
                device,
+               cell_line,
+               task,
                sampler='BO',
                n_trials=4,
                storage = 'SA_optuna_tuning.db'
@@ -244,6 +261,8 @@ class Param_Search():
         self.num_epochs = num_epochs
         self.study_name = study_name
         self.device = device
+        self.cell_line = cell_line
+        self.task = task
         self.n_trials = n_trials
         self.storage = storage
         self.best_model = None
@@ -260,6 +279,10 @@ class Param_Search():
             self.sampler = TPESampler()
         elif sampler == 'random':
             self.sampler = RandomSampler()
+
+        with open ('results_dict.pickle', 'rb') as fin:
+            self.results_dict = pickle.load(fin)
+            self.results_dict = defaultdict(lambda: defaultdict(dict), self.results_dict)
     
 
     def objective(self, trial):
@@ -267,11 +290,10 @@ class Param_Search():
         each final model.
         """
 
-        if self.model_name.startswith('FFNN'):
-            input_size = get_input_size(self.train_loader)
-            self.model = self.model_(trial, in_features=input_size, device=self.device) #.to(self.device)
-        else:
-            self.model = self.model_(trial, device=self.device) #.to(self.device)
+        in_features_FFNN = get_input_size(self.train_loader['FFNN'])
+        
+        self.model = self.model_(trial, cell_line=self.cell_line, task=self.task,
+            device=self.device, in_features_FFNN=in_features_FFNN) 
 
         # generate the possible optimizers
 
@@ -298,14 +320,22 @@ class Param_Search():
 
             # set the model in training modality
             self.model.to(self.device)
+
             self.model.train()
-            for data, target in self.train_loader:
-                
-                #target = target.reshape(-1,1)
+            for load1, load2 in zip(self.test_loader['FFNN'],
+                                          self.test_loader['CNN']):
+                x_1, target = load1
+                x_2, _, = load2
+                assert(len(x_1)==len(x_2))
+
+                selection_probabilities_ = selection_probabilities(self.results_dict, self.cell_line, 
+                                                                    self.task, len(x_1)) #giusto batcj_sisze?
+
                 # clear the gradients of all optimized variables
                 optimizer.zero_grad()
                 # forward pass: compute predicted outputs by passing inputs to the model
-                output = self.model(data.double().to(self.device))
+                output = self.model([x_1.double(), x_2.double()], selection_probabilities=selection_probabilities_,
+                    is_training=True)
                 # calculate the batch loss as a sum of the single losses
                 try:
                     loss = self.criterion.double().to(self.device)(output.float().to(self.device), target.squeeze().to(self.device)) 
@@ -320,10 +350,16 @@ class Param_Search():
             
             # set the model in testing modality
             self.model.eval()
-            for data, target in self.test_loader:  
-                
-                # forward pass: compute predicted outputs by passing inputs to the model
-                output = self.model(data.double().to(self.device))
+            for load1, load2 in zip(self.test_loader['FFNN'],
+                                          self.test_loader['CNN']):
+                x_1, target = load1
+                x_2, _, = load2
+                assert(len(x_1)==len(x_2))
+
+                selection_probabilities_ = selection_probabilities(self.results_dict, self.cell_line, 
+                                                                    self.task, len(x_1)) #giusto batcj_sisze?
+
+                output = self.model([x_1.double(), x_2.double()], selection_probabilities=selection_probabilities_)
                 # calculate the batch loss as a sum of the single losses
                 try:
                     loss = self.criterion.double().to(self.device)(output.float().to(self.device), target.squeeze().to(self.device)) 
@@ -335,7 +371,7 @@ class Param_Search():
                 
 
               # calculate epoch score by dividing by the number of observations
-            AUPRC_test /= (len(self.test_loader))
+            AUPRC_test /= (len(self.test_loader['FFNN']))
         
             # pass the score of the epoch to the study to monitor the intermediate objective values
             #trial.report(AUPRC_test, epoch) CHANGE
@@ -405,7 +441,7 @@ class Param_Search():
         self.trial_value = trial.value
 
     
-    def save_best_model(self, path):
+ #   def save_best_model(self, path):
         """Saves the weights of the common layers of the best performing model.
         
         Parameters:
@@ -418,7 +454,7 @@ class Param_Search():
         """
         
         # retrieve the weights of the best model
-        model_param = self.best_model.state_dict()
+      #  model_param = self.best_model.state_dict()
 
         
         # save only the weights of the common layers
@@ -426,19 +462,19 @@ class Param_Search():
      #       if re.findall('last', key):
       #          del model_param[str(key)]
 
-        basepath = 'models' 
-        path = os.path.join(basepath, path)
+    #    basepath = 'models' 
+     #   path = os.path.join(basepath, path)
 
-        torch.save(model_param, path)
+      #  torch.save(model_param, path)
 
-        return model_param
+       # return model_param
 
 
 def dd():
     return defaultdict(list)
 
 
-class Kfold_CV():
+class Kfold_CV_Multimodal():
     """Performs repeated holdout.
     Used for comparing different types of models and with and without augmentation"""
     
@@ -481,16 +517,16 @@ class Kfold_CV():
             #return DataLoader(dataset = wrap, batch_size= batch_size, shuffle=True)
         else:
             # create dataloader for test set
-            return DataLoader(dataset = wrap, batch_size= batch_size*2, shuffle=True)
+            return DataLoader(dataset = wrap, batch_size= batch_size*2, shuffle=True)    
         
         
-        
-    def hyper_tuning(self, train_loader, test_loader, num_epochs,
+    def hyper_tuning(self, train_loader, test_loader, num_epochs, cell_line, task,
                      study_name, hp_model_path, device, sampler):
             
-            param_search = Param_Search(model=self.model_, train_loader=train_loader, 
+            param_search = Param_Search_Multimodal(model=self.model_, train_loader=train_loader, 
                                         test_loader=test_loader, criterion=self.criterion, 
-                                        num_epochs=num_epochs, device=device, sampler=sampler,
+                                        num_epochs=num_epochs, cell_line=cell_line, task=task, 
+                                        device=device, sampler=sampler,
                                         n_trials=3, study_name=study_name)
 
             param_search.run_trial()
@@ -516,18 +552,18 @@ class Kfold_CV():
                 
             # save the params of the best hp tuning model (for loading in embracenet) # USEFUL?
             self.hp_score.append(param_search.trial_value)
-            if param_search.trial_value == max(self.hp_score):    
-                param_search.save_best_model(f'{hp_model_path}.pt') 
+           # if param_search.trial_value == max(self.hp_score):    
+            #    param_search.save_best_model(f'{hp_model_path}.pt') 
 
     
     
     def model_testing(self, train_loader, test_loader, num_epochs,
-                      test_model_path, device, checkpoint_path=None):
-        
-        AUPRC_train, AUPRC_test, other_scores = fit(model=self.model_, 
+                      test_model_path, device, cell_line, task, checkpoint_path=None):
+
+        AUPRC_train, AUPRC_test, other_scores = fit_multimodal(model=self.model_, 
                                     train_loader=train_loader, #OTHER_SCORES
                                     test_loader=test_loader, criterion=self.criterion,
-                                    device=device, optimizer=self.optimizer, num_epochs=num_epochs, 
+                                    device=device, cell_line=cell_line, task=task, optimizer=self.optimizer, num_epochs=num_epochs, 
                                     patience=5, verbose=False, 
                                     checkpoint_path=f'{checkpoint_path}.pt')
             
@@ -538,7 +574,9 @@ class Kfold_CV():
             
         print(f'AUPRC test score: {AUPRC_test[-1]}\n\n')
         #print(f'F1: {other_scores[0]}, Precision: {other_scores[1]}, Recall: {other_scores[2]}')
-            
+        
+        # SISTEMA MODEL TESTING QUANDO CARICO MODELLO
+        
         # save the params of the best testing model (for loading in embracenet)
         self.avg_score.append(AUPRC_test[-1])
         if AUPRC_test[-1] == max(self.avg_score):
@@ -554,13 +592,12 @@ class Kfold_CV():
             cell_line,
             device,
             task=None,
-            sequence=False, 
             model=None,
             augmentation=False,
             type_augm_genfeatures='smote',
             random_state=321,
-            n_folds=4,
-            num_epochs=50, 
+            n_folds=3,
+            num_epochs=100, 
             batch_size=100,
             study_name=None,
             sampler='BO',
@@ -571,13 +608,14 @@ class Kfold_CV():
         self.n_folds = n_folds
         self.type_augm_genfeatures = type_augm_genfeatures
         self.augmentation = augmentation
-        self.sequence = sequence
     
         self.avg_score = []
         self.hp_score = []
         
-        data_class = build_dataloader_pipeline.data_class
-        kf, X, y = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=sequence,
+        data_class = build_dataloader_pipeline.data_class 
+        kf, X_1, y = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=False, 
+                                                      n_folds=n_folds, random_state=random_state)
+        _, X_2, _ = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=True, 
                                                       n_folds=n_folds, random_state=random_state)
         
         w_pos,w_neg = get_loss_weights_from_labels(y)
@@ -590,44 +628,72 @@ class Kfold_CV():
 
         
         self.i=1
-        for train_index, test_index in kf.split(X):
+        for train_index, test_index in kf.split(X_1):
             
             study_name = study_name + '_' + str(self.i)
 
             print(f'>>> ITERATION N. {self.i}')
             
-            X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+            X_train_1, X_test_1 = X_1.iloc[train_index], X_1.iloc[test_index]
+            X_train_2, X_test_2 = X_2.iloc[train_index], X_2.iloc[test_index]
             y_train, y_test = y.iloc[train_index], y.iloc[test_index]
             
-            X_train, X_val, y_train, y_val = train_test_split(X_train, y_train,
+            X_train_1, X_val_1, _, _ = train_test_split(X_train_1, y_train,
                                                               test_size=1/self.n_folds,
                                                               random_state=random_state, shuffle=True) 
+            X_train_2, X_val_2, y_train, y_val = train_test_split(X_train_2, y_train,
+                                                              test_size=1/self.n_folds,
+                                                              random_state=random_state, shuffle=True) 
+
             self.model_ = model
             
             print('\n===============> HYPERPARAMETERS TUNING')
             
-            train_loader = self.build_dataloader_forCV(X_train, y_train, sequence=sequence, 
-                                               batch_size=batch_size, training=True,
+            train_loader = defaultdict(dict)
+            train_loader['FFNN'] = self.build_dataloader_forCV(X_train_1, y_train,
+                                               batch_size=batch_size, training=True, sequence=False,
                                                augmentation=augmentation, type_augm_genfeatures=type_augm_genfeatures)
-            test_loader = self.build_dataloader_forCV(X_val, y_val, sequence=sequence, 
+            train_loader['CNN'] = self.build_dataloader_forCV(X_train_2, y_train,
+                                               batch_size=batch_size, training=True, sequence=True,
+                                               augmentation=augmentation, type_augm_genfeatures=type_augm_genfeatures)
+
+            test_loader = defaultdict(dict)
+            test_loader['FFNN'] = self.build_dataloader_forCV(X_val_1, y_val, sequence=False,
                                                batch_size=batch_size, training=False,
-                                               augmentation=False)
+                                               augmentation=False) 
+            test_loader['CNN'] = self.build_dataloader_forCV(X_val_2, y_val, sequence=True,
+                                               batch_size=batch_size, training=False,
+                                               augmentation=False) 
+            self.train_loader = train_loader
+            self.test_loader = test_loader
             
-            self.hyper_tuning(train_loader, test_loader, num_epochs,
+            self.hyper_tuning(train_loader, test_loader, num_epochs, cell_line, task,
                               study_name, hp_model_path, device, sampler)
             
             
             print('\n===============> MODEL TESTING')
             
-            train_loader = self.build_dataloader_forCV([X_train, X_val], [y_train, y_val], sequence=sequence, 
+            train_loader = defaultdict(dict)
+            train_loader['FFNN'] = self.build_dataloader_forCV([X_train_1, X_val_1], [y_train, y_val], sequence=False, 
                                                batch_size=batch_size, training=True,
                                                augmentation=augmentation, type_augm_genfeatures=type_augm_genfeatures)
-            test_loader = self.build_dataloader_forCV(X_test, y_test, sequence=sequence, 
+            train_loader['CNN'] = self.build_dataloader_forCV([X_train_2, X_val_2], [y_train, y_val], sequence=True, 
+                                               batch_size=batch_size, training=True,
+                                               augmentation=augmentation, type_augm_genfeatures=type_augm_genfeatures)
+
+            test_loader = defaultdict(dict)
+            test_loader['FFNN'] = self.build_dataloader_forCV(X_test_1, y_test, sequence=False, 
                                                batch_size=batch_size, training=False,
                                                augmentation=False)
+            test_loader['CNN'] = self.build_dataloader_forCV(X_test_1, y_test, sequence=True, 
+                                               batch_size=batch_size, training=False,
+                                               augmentation=False)
+
+            # SISTEMA MODEL TESTING QUANDO CARICO MODELLO
             
             self.model_testing(train_loader, test_loader, num_epochs,
-                               test_model_path, device, checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{self.type_augm_genfeatures if self.augmentation else None}')
+                               test_model_path, device, cell_line, task,
+                               checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{self.type_augm_genfeatures if self.augmentation else None}')
             
             self.i+=1
                 

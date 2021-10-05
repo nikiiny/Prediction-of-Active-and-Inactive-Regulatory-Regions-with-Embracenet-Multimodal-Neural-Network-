@@ -268,6 +268,23 @@ def get_imbalance(y):
     return float(n_pos/n_neg)
 
 
+def get_IR(y):
+    """
+    Returns imbalance ratio as tot.negative / tot.positive .
+
+    Parameters
+    ------------
+    y (pd.Series): binary labels.
+    """
+
+    if isinstance(y, pd.DataFrame):
+        y=pd.Series(y.values)
+    
+    n_pos = y[y==1].count()
+    n_neg = y[y==0].count()
+    return float(n_neg/n_pos)
+
+
 
 def reverse_strand(sequence):
     """
