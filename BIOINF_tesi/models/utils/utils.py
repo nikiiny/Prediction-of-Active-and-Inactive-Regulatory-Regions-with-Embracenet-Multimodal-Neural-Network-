@@ -228,8 +228,8 @@ def get_loss_weights_from_dataloader(dataloader):
         tot+=len(j)
     neg=tot-pos
     
-    pos_inv = 1/pos
-    neg_inv = 1/neg
+    pos_inv = 1/pos if 1/pos !=0 else 0
+    neg_inv = 1/neg if 1/neg !=0 else 0
     
     return pos_inv/(neg_inv+pos_inv), neg_inv/(neg_inv+pos_inv)
 
@@ -246,8 +246,8 @@ def get_loss_weights_from_labels(label):
     pos = len(label[label==1])
     neg = len(label[label==0])
     
-    pos_inv = 1/pos
-    neg_inv = 1/neg
+    pos_inv = 1/pos if 1/pos !=0 else 0
+    neg_inv = 1/neg if 1/neg !=0 else 0
     
     return pos_inv/(neg_inv+pos_inv), neg_inv/(neg_inv+pos_inv)
 
