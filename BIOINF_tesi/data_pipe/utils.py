@@ -251,21 +251,24 @@ def remove_correlated_features(X, y, correlated_pairs, type_test='wilcoxon_test'
 
 
 
-def get_imbalance(y):
+def get_imbalance(y=None, n_pos=None, n_neg=None):
     """
-    Returns percentage of class imbalance.
+    Returns percentage of class imbalance either by directly giving
+    the labels or the lenght of the labels.
 
     Parameters
     ------------
     y (pd.Series): binary labels.
     """
 
-    if isinstance(y, pd.DataFrame):
-        y=pd.Series(y.values)
-    
-    n_pos = y[y==1].count()
-    n_neg = y[y==0].count()
-    return float(n_pos/n_neg)
+    if isinstance(y, (pd.Series, pd.DataFrame)):
+        y=np.array(y)
+
+    if isinstance(y, np.ndarray):
+        n_pos = len(y[y==1])
+        n_neg = len(y[y==0])
+
+    return np.round(float(n_pos/n_neg),2)
 
 
 def get_IR(y):
@@ -277,11 +280,11 @@ def get_IR(y):
     y (pd.Series): binary labels.
     """
 
-    if isinstance(y, pd.DataFrame):
-        y=pd.Series(y.values)
+    if isinstance(y, (pd.DataFrame, pd.Series)):
+        y=np.array(y.values)
     
-    n_pos = y[y==1].count()
-    n_neg = y[y==0].count()
+    n_pos = len(y[y==1])
+    n_neg = len(y[y==0])
     return float(n_neg/n_pos)
 
 
@@ -301,7 +304,7 @@ def reverse_strand(sequence):
     return ''.join(sequence)
 
 
-def double_augment(X, y, threshold, imbalance, random_state):
+def double_rebalance(X, y, threshold, imbalance, random_state):
     """
     Augment data and labels by adding complementary strands.
 
@@ -332,7 +335,7 @@ def double_augment(X, y, threshold, imbalance, random_state):
 
 
 
-def reverse_strand_augment(X, y, threshold, imbalance, random_state):
+def reverse_strand_rebalance(X, y, rebalance_threshold, random_state):
     """
     Augment data and labels by adding complementary strands.
 
@@ -341,7 +344,7 @@ def reverse_strand_augment(X, y, threshold, imbalance, random_state):
     X (pd.DataFrame): data about genomic sequences.
     y (pd.Seres): binary labels.
     imbalance: current level of imbalance as ratio.
-    threshold: desired level of imbalance as ratio.
+    rebalance_threshold: desired level of imbalance as ratio.
     """
     
     if isinstance(y, pd.DataFrame):
@@ -355,9 +358,67 @@ def reverse_strand_augment(X, y, threshold, imbalance, random_state):
     y_ = pd.Series([1]*len(pos_index))
     
     np.random.seed(random_state)
-    index = np.random.randint(0, len(X_), int( len(X_)*(threshold-imbalance)/imbalance ))
+    n_obs = compute_rebalancing_obs(rebalance_threshold, y=y)
+    index = np.random.randint(0, len(X_), n_obs)
     X = X.append(X_.iloc[index])
     y = y.append(y_.iloc[index])
+
+    assert (len(X) == len(y))
+    assert (get_imbalance(y) == rebalance_threshold)
+    
+    return X.reset_index(drop=True), y.reset_index(drop=True)
+
+
+
+def reverse_strand_augment(X, y, rebalance=True, rebalance_threshold=None, 
+    random_state=123):
+    """
+    Augment data and labels by adding complementary strands.
+
+    Parameters
+    --------------
+    X (pd.DataFrame): data about genomic sequences.
+    y (pd.Seres): binary labels.
+    imbalance: current level of imbalance as ratio.
+    rebalance_threshold: desired level of imbalance as ratio.
+    """
+
+    if isinstance(y, pd.DataFrame):
+        y=pd.Series(y.values)
+
+    len_X_pre = len(X)
+    # positive examples
+    index_ = y[y==1].index
+    X_ = X.iloc[index_].copy()
+    X_ = X_.apply(lambda x: reverse_strand(x))
+    X_.reset_index(drop=True, inplace=True)
+    y_ = pd.Series([1]*len(index_))
+    X=X.append(X_)
+    y=y.append(y_)
+
+    # negative examples
+    index_ = y[y==0].index
+    X_ = X.iloc[index_].copy()
+    X_ = X_.apply(lambda x: reverse_strand(x))
+    X_.reset_index(drop=True, inplace=True)
+
+    imbalance=get_imbalance(y)
+    # if the data was imbalanced, we cannot double all the negatives, but we need to
+    #take a subsample of them so that the rebalancing threshold is satisfied.
+    if rebalance and imbalance>=rebalance_threshold: 
+        n_obs = compute_rebalancing_obs(0.1, y=y)
+        np.random.seed(random_state)
+        index = np.random.randint(0, len(X_), n_obs)
+        X=X.append(X_.iloc[index])
+        y=y.append(pd.Series([0]*n_obs))
+
+        assert (get_imbalance(y) == rebalance_threshold)
+
+    else:
+        y_ = pd.Series([0]*len(index_))
+        X=X.append(X_)
+        y=y.append(y_)
+        assert (len_X_pre*2 == len(X))
 
     assert (len(X) == len(y))
     
@@ -366,10 +427,62 @@ def reverse_strand_augment(X, y, threshold, imbalance, random_state):
 
 
 
-def data_augmentation(X, y, sequence=False, type_augm_genfeatures='smote', 
-                        threshold=0.1, random_state=123):
+def data_rebalancing(X, y, sequence=False, type_augm_genfeatures='smote', 
+                        rebalance_threshold=0.1, random_state=123):
     """
-    Performs data augmentation. ........ comment
+    Performs data rebalancing through augmentation. ........ comment
+    
+    Attributes:
+    X (pd.DataFrame): data.
+    y (pd.Seres): labels.
+    sequence (bool): if the data is a genomic sequence or not.
+        Default: False
+    type_augm_genfeatures: when the data are the epigenomic features,
+        what kind of augmentation to apply. Possible choices are
+        'smote' and 'double'.
+        Default: 'smote'
+    rebalance_threshold: desired level of imbalance as ratio.
+        Default: 0.15
+    random_state (int): initial random seed.
+        Default: 123
+
+    """
+    
+    TYPE_AUGM_GENFEATURES
+
+    if type_augm_genfeatures not in TYPE_AUGM_GENFEATURES:
+                raise ValueError(
+                f"Argument 'type_augm_genfeatures' has an incorrect value: use one among {TYPE_AUGM_GENFEATURES}")
+
+
+    imbalance = get_imbalance(y)
+    if imbalance <= rebalance_threshold:
+        
+        if sequence: 
+            X,y = reverse_strand_rebalance(X, y, rebalance_threshold, random_state)
+            return X,y
+        
+        else:
+            if type_augm_genfeatures == 'smote':
+                oversample_SMOTE = SMOTE(k_neighbors=5, sampling_strategy = rebalance_threshold)
+                X, y = oversample_SMOTE.fit_resample(X, y.ravel())
+                return X.reset_index(drop=True), pd.Series(y)
+
+            elif type_augm_genfeatures == 'double':
+                X,y = double_rebalance(X, y, rebalance_threshold, imbalance, random_state)
+                return X, y
+    
+    else:
+        return X, y
+    
+
+
+
+
+def data_augmentation(X, y, sequence=False, rebalancing=True, 
+                        rebalance_threshold=0.1, random_state=123):
+    """
+    Performs data augmentation and rebalancing if required. ........ comment
     
     Attributes:
     X (pd.DataFrame): data.
@@ -386,31 +499,66 @@ def data_augmentation(X, y, sequence=False, type_augm_genfeatures='smote',
         Default: 123
 
     """
-    
-    TYPE_AUGM_GENFEATURES
 
-    if type_augm_genfeatures not in TYPE_AUGM_GENFEATURES:
-                raise ValueError(
-                f"Argument 'type_augm_genfeatures' has an incorrect value: use one among {TYPE_AUGM_GENFEATURES}")
+    len_X_pre = len(X)
+    if rebalancing:
 
+        imbalance = get_imbalance(y)
+        if imbalance <= rebalance_threshold:
+            
+            if sequence: 
+                X,y = reverse_strand_augment(X, y, rebalance=True, rebalance_threshold=rebalance_threshold, 
+                    random_state=random_state)
+                return X,y
+            
+            else:
+                n_pos=y[y==1].count()*2
+                n_neg=y[y==0].count()
 
-    imbalance = get_imbalance(y)
-    if imbalance <= threshold:
-        
-        if sequence:
-            X,y = reverse_strand_augment(X, y, threshold, imbalance, random_state)
-            return X,y
-        
-        else:
-            if type_augm_genfeatures == 'smote':
-                oversample_SMOTE = SMOTE(k_neighbors=5, sampling_strategy = threshold)
+                sampling_strategy = {0: n_neg+compute_rebalancing_obs(0.1, n_pos=n_pos, n_neg=n_neg),
+                                    1: n_pos}
+                oversample_SMOTE = SMOTE(k_neighbors=5, sampling_strategy = sampling_strategy)
                 X, y = oversample_SMOTE.fit_resample(X, y.ravel())
+
+                assert( get_imbalance(y) == rebalance_threshold)
+                return X.reset_index(drop=True), pd.Series(y)
+        
+
+    else:
+        if sequence: 
+                X,y = reverse_strand_augment(X, y, rebalance=False, random_state=random_state)
+                return X,y
+        else:
+                n_pos=y[y==1].count()*2
+                n_neg=y[y==0].count()*2
+
+                sampling_strategy = {0: n_neg, 1: n_pos}
+                oversample_SMOTE = SMOTE(k_neighbors=5, sampling_strategy = sampling_strategy)
+                X, y = oversample_SMOTE.fit_resample(X, y.ravel())
+
+                assert( len_X_pre == len(X))
                 return X.reset_index(drop=True), pd.Series(y)
 
-            elif type_augm_genfeatures == 'double':
-                X,y = double_augment(X, y, threshold, imbalance, random_state)
-                return X, y
-    
-    else:
         return X, y
     
+
+
+def compute_rebalancing_obs(rebalance_threshold=0.1, y=None, n_pos=None, n_neg=None):
+    
+    if isinstance(y, np.ndarray):
+        y=pd.Series(y)
+
+    if isinstance(y, pd.Series):
+        imbalance = get_imbalance(y)
+        n_pos = y[y==1].count()
+        n_neg = y[y==0].count()
+    elif n_pos and n_neg:
+        imbalance = get_imbalance(n_pos=n_pos, n_neg=n_neg)
+
+
+    if imbalance <= rebalance_threshold:
+        return int((n_neg*rebalance_threshold) - n_pos)
+    else:
+        return int((n_pos/rebalance_threshold) - n_neg)
+
+

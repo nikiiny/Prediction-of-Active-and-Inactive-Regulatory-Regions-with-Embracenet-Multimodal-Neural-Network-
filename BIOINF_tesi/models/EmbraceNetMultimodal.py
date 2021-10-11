@@ -31,7 +31,6 @@ class EmbraceNet(nn.Module):
             for i, input_size in enumerate(input_size_list):
                 setattr(self, 'docking_%d' % (i), nn.Linear(input_size, embracement_size))
 
-
     def forward(self, input_list, availabilities=None, selection_probabilities=None):
         #batch_size??
         """
@@ -66,7 +65,6 @@ class EmbraceNet(nn.Module):
             availabilities = torch.ones(batch_size, len(input_list), dtype=torch.float, device=self.device)
         else:
             availabilities = availabilities.float()
-
 
         # adjust selection probabilities
         if (selection_probabilities is None):
@@ -142,7 +140,7 @@ class EmbraceNetMultimodal(nn.Module):
 
         
         # 2) embracenet
-        embracement_size = self.trial.suggest_categorical("embracement_size", [128, 256, 512]) #????
+        embracement_size = self.trial.suggest_categorical("embracement_size", [512, 768, 1024]) #????
         
         self.embracenet = EmbraceNet(device=self.device, 
                                      input_size_list=[self.FFNN_pre_output_size, self.CNN_pre_output_size], 
@@ -152,7 +150,7 @@ class EmbraceNetMultimodal(nn.Module):
         
         
         # 3) post embracement layers
-        n_post_layers = self.trial.suggest_int("n_post_layers", 1, 2) #3
+        n_post_layers = self.trial.suggest_int("n_post_layers", 0, 2) 
         post_layers = []
 
         for i in range(n_post_layers):
@@ -160,18 +158,12 @@ class EmbraceNetMultimodal(nn.Module):
                 out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [32, 64, 128, 256])
             elif i==1:
                 out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [16, 32, 64, 128])
-            elif i==2:
-                out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [4, 16, 32, 64])
                 
             post_layers.append(nn.Linear(in_features, out_features))
             post_layers.append(nn.ReLU())
             
-            if i<2:
-                dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0.0, 0.2, 0.3, 0.4])
-                post_layers.append(nn.Dropout(dropout))
-            elif i>=2:
-                dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0.0, 0.4, 0.5])
-                post_layers.append(nn.Dropout(dropout))
+            dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0.0, 0.3, 0.5, 0.7])
+            post_layers.append(nn.Dropout(dropout))
                 
             in_features = out_features
             
@@ -180,13 +172,14 @@ class EmbraceNetMultimodal(nn.Module):
 
         self.post = nn.Sequential(*post_layers)
 
+        selection_probabilities = self.trial.suggest_float("selection_probabilities_FFNN", 0.0, 1.0)
+        self.selection_probabilities = torch.tensor([selection_probabilities, 1.0-selection_probabilities])
   
-    def forward(self, x, availabilities=None, selection_probabilities=None, is_training=False):
+    def forward(self, x, availabilities=None, selection_probabilities=None, is_training=False, embracenet_dropout=True):
     # availabilities: don't change since we have all the data
     # selection probabilities: weight the contribution according to the auprc
     
         x_FFNN, x_CNN = x
-
         x_FFNN = self.FFNN(x_FFNN)
         x_CNN = self.CNN(x_CNN)
 
@@ -201,14 +194,16 @@ class EmbraceNetMultimodal(nn.Module):
            # if (self.args.model_drop_right):
             #    availabilities[:, 2] = 0
 
-        if (is_training and self.embracenet_dropout):
+        if (is_training and embracenet_dropout):
             dropout_prob = torch.rand(1, device=self.device)[0]
             if (dropout_prob >= 0.5):
                 target_modalities = torch.round(torch.rand([x_FFNN.shape[0]], device=self.device)).to(torch.int64)
                 availabilities = nn.functional.one_hot(target_modalities, num_classes=2).float()
 
+        self.selection_probabilities_ = self.selection_probabilities.repeat(x_FFNN.shape[0],1)
+
         # embrace
-        embracenet = self.embracenet([x_FFNN, x_CNN], availabilities=availabilities, selection_probabilities=selection_probabilities)
+        embracenet = self.embracenet([x_FFNN, x_CNN], availabilities=availabilities, selection_probabilities=self.selection_probabilities_)
 
         # employ final layers
         output = self.post(embracenet)

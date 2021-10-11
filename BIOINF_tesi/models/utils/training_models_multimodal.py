@@ -24,19 +24,20 @@ from optuna.samplers import TPESampler, RandomSampler
 
 from .utils import (EarlyStopping, F1_precision_recall, AUPRC, size_out_convolution, 
     weight_reset, get_loss_weights_from_dataloader, get_loss_weights_from_labels, 
-    get_input_size, plot_other_scores, plot_F1_scores, save_best_model, selection_probabilities)
-from BIOINF_tesi.data_pipe.utils import data_augmentation
+    get_input_size, plot_other_scores, plot_F1_scores, save_best_model, 
+    selection_probabilities)
 from BIOINF_tesi.data_pipe.dataprepare import Data_Prepare, Dataset_Wrap, BalancePos_BatchSampler
+from BIOINF_tesi.data_pipe.utils import data_augmentation
 
 
 
 def fit_multimodal(model, 
         train_loader, 
         test_loader, 
-        criterion,
         device,
         cell_line,
         task,
+        results_dict,
         optimizer=None, 
         num_epochs=100,
         patience=5,
@@ -51,7 +52,6 @@ def fit_multimodal(model,
     model (torch.nn.Module): neural network model.
     train_loader (DataLoader): training DataLoader object.
     test_loader (DataLoader): testing DataLoader object.
-    criterion: loss function for training the model.
     device: 'CPU' or 'CUDA'.
     optimizer (torch.optim): optimization algorithm for training the model. 
     num_epochs (int): number of epochs.
@@ -85,10 +85,6 @@ def fit_multimodal(model,
     
     else:
 
-        with open ('results_dict.pickle', 'rb') as fin:
-            results_dict = pickle.load(fin)
-            results_dict = defaultdict(lambda: defaultdict(dict), results_dict)
-
         # keep track of epoch losses 
         AUPRC_train_scores, AUPRC_train_scores_pos, AUPRC_train_scores_neg = [],[],[]
 
@@ -120,15 +116,14 @@ def fit_multimodal(model,
                 x_2, _ = load2
                 assert(len(x_1)==len(x_2))
 
-                selection_probabilities_ = selection_probabilities(results_dict, cell_line, 
-                                                                    task, len(x_1)) #giusto batcj_sisze?
+                w_pos,w_neg = get_loss_weights_from_labels(target)
+                criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_neg, w_pos]))
 
                 target = target.reshape(-1)
                 # clear the gradients of all optimized variables
                 optimizer.zero_grad()
                 # forward pass: compute predicted outputs by passing inputs to the model
-                output = model([x_1.double(), x_2.double()], selection_probabilities=selection_probabilities_,
-                    is_training=True)
+                output = model([x_1.double(), x_2.double()], is_training=True)
                 # calculate the batch loss as the sum of all the losses
                 try:
                     loss = criterion.double().to(device)(output.float(), target.squeeze()) 
@@ -153,11 +148,11 @@ def fit_multimodal(model,
                 x_2, _, = load2
                 assert(len(x_1)==len(x_2))
 
-                selection_probabilities_ = selection_probabilities(results_dict, cell_line, 
-                                                                    task, len(x_1)) #giusto batcj_sisze?
+                w_pos,w_neg = get_loss_weights_from_labels(target)
+                criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_neg, w_pos]))
 
                 # forward pass: compute predicted outputs by passing inputs to the model
-                output = model([x_1.double(), x_2.double()], selection_probabilities=selection_probabilities_)
+                output = model([x_1.double(), x_2.double()]) # selection_probabilities=selection_probabilities_)
                 # calculate the batch loss as the sum of all the losses
                 try:
                     loss = criterion.double().to(device)(output.float(), target.squeeze()) 
@@ -222,7 +217,6 @@ class Param_Search_Multimodal():
     model (torch.nn.Module): neural network model.
     train_loader (DataLoader): training DataLoader object.
     test_loader (DataLoader): testing DataLoader object.
-    criterion : loss function for training the model.
     num_epochs (int): number of epochs.
     study_name (str): name of the Optuna study object.
     sampler (str): type of optimiser to use. Possible values are
@@ -244,12 +238,12 @@ class Param_Search_Multimodal():
                model,
                train_loader, 
                test_loader,
-               criterion,
                num_epochs,
                study_name,
                device,
                cell_line,
                task,
+               results_dict,
                sampler='BO',
                n_trials=4,
                storage = 'SA_optuna_tuning.db'
@@ -257,12 +251,12 @@ class Param_Search_Multimodal():
         self.model_ = copy.deepcopy(model)
         self.train_loader = train_loader
         self.test_loader = test_loader
-        self.criterion = criterion
         self.num_epochs = num_epochs
         self.study_name = study_name
         self.device = device
         self.cell_line = cell_line
         self.task = task
+        self.results_dict = results_dict
         self.n_trials = n_trials
         self.storage = storage
         self.best_model = None
@@ -279,11 +273,6 @@ class Param_Search_Multimodal():
             self.sampler = TPESampler()
         elif sampler == 'random':
             self.sampler = RandomSampler()
-
-        with open ('results_dict.pickle', 'rb') as fin:
-            self.results_dict = pickle.load(fin)
-            self.results_dict = defaultdict(lambda: defaultdict(dict), self.results_dict)
-    
 
     def objective(self, trial):
         """Defines the objective to be optimised (AUPRC test score) and saves
@@ -328,14 +317,13 @@ class Param_Search_Multimodal():
                 x_2, _, = load2
                 assert(len(x_1)==len(x_2))
 
-                selection_probabilities_ = selection_probabilities(self.results_dict, self.cell_line, 
-                                                                    self.task, len(x_1)) #giusto batcj_sisze?
+                w_pos,w_neg = get_loss_weights_from_labels(target)
+                self.criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_neg, w_pos]))
 
                 # clear the gradients of all optimized variables
                 optimizer.zero_grad()
                 # forward pass: compute predicted outputs by passing inputs to the model
-                output = self.model([x_1.double(), x_2.double()], selection_probabilities=selection_probabilities_,
-                    is_training=True)
+                output = self.model([x_1.double(), x_2.double()], is_training=True)
                 # calculate the batch loss as a sum of the single losses
                 try:
                     loss = self.criterion.double().to(self.device)(output.float().to(self.device), target.squeeze().to(self.device)) 
@@ -356,10 +344,10 @@ class Param_Search_Multimodal():
                 x_2, _, = load2
                 assert(len(x_1)==len(x_2))
 
-                selection_probabilities_ = selection_probabilities(self.results_dict, self.cell_line, 
-                                                                    self.task, len(x_1)) #giusto batcj_sisze?
+                w_pos,w_neg = get_loss_weights_from_labels(target)
+                self.criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_neg, w_pos]))
 
-                output = self.model([x_1.double(), x_2.double()], selection_probabilities=selection_probabilities_)
+                output = self.model([x_1.double(), x_2.double()]) #, selection_probabilities=selection_probabilities_)
                 # calculate the batch loss as a sum of the single losses
                 try:
                     loss = self.criterion.double().to(self.device)(output.float().to(self.device), target.squeeze().to(self.device)) 
@@ -386,8 +374,7 @@ class Param_Search_Multimodal():
                 break
 
         # save the final model named with the number of the trial 
-        with open("{}{}.pickle".format(self.study_name, trial.number), "wb") as fout:
-            pickle.dump(self.model, fout)
+        torch.save(self.model, f'{self.study_name}{trial.number}.pt')
         
         # return AUPRC score to the study
         return AUPRC_test
@@ -416,9 +403,8 @@ class Param_Search_Multimodal():
             complete_trials = [t for t in study.trials if t.state == optuna.structs.TrialState.COMPLETE]
             
             
-        # store the best model found in the class
-        with open("{}{}.pickle".format(self.study_name, study.best_trial.number), "rb") as fin:
-            best_model = pickle.load(fin)
+        # load the best model found in the class
+        best_model = torch.load(f'{self.study_name}{study.best_trial.number}.pt', torch.device(self.device)) 
 
         self.best_model = best_model
 
@@ -481,13 +467,16 @@ class Kfold_CV_Multimodal():
     def __init__(self):
         
         self.scores_dict = defaultdict(dd)
+        self.scores_dict['final_test_AUPRC_scores'] = []
+        self.scores_dict['final_train_AUPRC_scores'] = []
+
         self.model_ = []
         self.optimizer = []
         self.best_params = defaultdict(dict)
     
     
     def build_dataloader_forCV(self, X, y, sequence, batch_size, training=True,
-                        augmentation=True, type_augm_genfeatures='smote', n_neighbors=5):
+                        augmentation=True, rebalancing=False, type_augm_genfeatures='smote', n_neighbors=5):
 
         if isinstance(X, list):
             for x_ in X:
@@ -502,10 +491,11 @@ class Kfold_CV_Multimodal():
         else:
             X.reset_index(drop=True, inplace=True), y.reset_index(drop=True, inplace=True)
 
-        if training and augmentation:
+
+        if training and augmentation and rebalancing:
             # augment data
-            X, y = data_augmentation(X, y, sequence=sequence, type_augm_genfeatures=type_augm_genfeatures,
-                threshold=0.1)
+            X, y = data_augmentation(X, y, sequence=sequence, rebalancing=True,
+                rebalance_threshold=0.1)
 
         # build wrapper
         wrap = Dataset_Wrap(X, y, sequence=sequence)
@@ -524,9 +514,9 @@ class Kfold_CV_Multimodal():
                      study_name, hp_model_path, device, sampler):
             
             param_search = Param_Search_Multimodal(model=self.model_, train_loader=train_loader, 
-                                        test_loader=test_loader, criterion=self.criterion, 
+                                        test_loader=test_loader, 
                                         num_epochs=num_epochs, cell_line=cell_line, task=task, 
-                                        device=device, sampler=sampler,
+                                        results_dict=self.results_dict, device=device, sampler=sampler,
                                         n_trials=3, study_name=study_name)
 
             param_search.run_trial()
@@ -547,8 +537,6 @@ class Kfold_CV_Multimodal():
                 self.optimizer = getattr(timm.optim , optimizer_name)(self.model_.parameters(), lr=lr, weight_decay=weight_decay)
             else:
                 self.optimizer = getattr(torch.optim , optimizer_name)(self.model_.parameters(), lr=lr, weight_decay=weight_decay)
-
-
                 
             # save the params of the best hp tuning model (for loading in embracenet) # USEFUL?
             self.hp_score.append(param_search.trial_value)
@@ -562,8 +550,9 @@ class Kfold_CV_Multimodal():
 
         AUPRC_train, AUPRC_test, other_scores = fit_multimodal(model=self.model_, 
                                     train_loader=train_loader, #OTHER_SCORES
-                                    test_loader=test_loader, criterion=self.criterion,
-                                    device=device, cell_line=cell_line, task=task, optimizer=self.optimizer, num_epochs=num_epochs, 
+                                    test_loader=test_loader, 
+                                    device=device, cell_line=cell_line, task=task, results_dict=self.results_dict,
+                                    optimizer=self.optimizer, num_epochs=num_epochs, 
                                     patience=5, verbose=False, 
                                     checkpoint_path=f'{checkpoint_path}.pt')
             
@@ -572,19 +561,23 @@ class Kfold_CV_Multimodal():
 
         self.scores_dict[f'iteration_n_{self.i}'][f'F1_precision_recall'] = other_scores
             
-        print(f'AUPRC test score: {AUPRC_test[-1]}\n\n')
+        final_test_AUPRC_score = AUPRC_test[-1]
+        self.scores_dict['final_test_AUPRC_scores'].append(final_test_AUPRC_score)
+        final_train_AUPRC_score = AUPRC_train[-1]
+        self.scores_dict['final_train_AUPRC_scores'].append(final_train_AUPRC_score)
+
+        print(f'AUPRC test score: {final_test_AUPRC_score}\n\n')
         #print(f'F1: {other_scores[0]}, Precision: {other_scores[1]}, Recall: {other_scores[2]}')
         
         # SISTEMA MODEL TESTING QUANDO CARICO MODELLO
         
         # save the params of the best testing model (for loading in embracenet)
-        self.avg_score.append(AUPRC_test[-1])
-        if AUPRC_test[-1] == max(self.avg_score):
+        self.avg_score.append(final_test_AUPRC_score)
+        if final_test_AUPRC_score == max(self.avg_score):
                 torch.save({
                         'model_state_dict': self.model_.state_dict(),
                         'model_params': self.best_params[self.i]
                     }, f'models/{test_model_path}.pt')
-    
     
     
     def __call__(self,
@@ -593,8 +586,8 @@ class Kfold_CV_Multimodal():
             device,
             task=None,
             model=None,
-            augmentation=False,
-            type_augm_genfeatures='smote',
+            augmentation=True,
+            rebalancing=False,
             random_state=321,
             n_folds=3,
             num_epochs=100, 
@@ -606,25 +599,23 @@ class Kfold_CV_Multimodal():
             ):
         
         self.n_folds = n_folds
-        self.type_augm_genfeatures = type_augm_genfeatures
         self.augmentation = augmentation
+        self.rebalancing = rebalancing
+
+        with open ('results_dict.pickle', 'rb') as fin:
+            results_dict = pickle.load(fin)
+            self.results_dict = defaultdict(lambda: defaultdict(dict), results_dict)
     
         self.avg_score = []
         self.hp_score = []
+
         
         data_class = build_dataloader_pipeline.data_class 
         kf, X_1, y = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=False, 
                                                       n_folds=n_folds, random_state=random_state)
         _, X_2, _ = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=True, 
                                                       n_folds=n_folds, random_state=random_state)
-        
-        w_pos,w_neg = get_loss_weights_from_labels(y)
-
-        if w_neg<0.1:
-            w_pos=0.9
-            w_neg=0.1
-
-        self.criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_neg, w_neg]))
+    
 
         
         self.i=1
@@ -652,18 +643,18 @@ class Kfold_CV_Multimodal():
             train_loader = defaultdict(dict)
             train_loader['FFNN'] = self.build_dataloader_forCV(X_train_1, y_train,
                                                batch_size=batch_size, training=True, sequence=False,
-                                               augmentation=augmentation, type_augm_genfeatures=type_augm_genfeatures)
+                                               augmentation=self.augmentation, rebalancing=self.rebalancing)
             train_loader['CNN'] = self.build_dataloader_forCV(X_train_2, y_train,
                                                batch_size=batch_size, training=True, sequence=True,
-                                               augmentation=augmentation, type_augm_genfeatures=type_augm_genfeatures)
+                                               augmentation=self.augmentation, rebalancing=self.rebalancing)
 
             test_loader = defaultdict(dict)
             test_loader['FFNN'] = self.build_dataloader_forCV(X_val_1, y_val, sequence=False,
                                                batch_size=batch_size, training=False,
-                                               augmentation=False) 
+                                               augmentation=False, rebalancing=False) 
             test_loader['CNN'] = self.build_dataloader_forCV(X_val_2, y_val, sequence=True,
                                                batch_size=batch_size, training=False,
-                                               augmentation=False) 
+                                               augmentation=False, rebalancing=False) 
 
             
             self.hyper_tuning(train_loader, test_loader, num_epochs, cell_line, task,
@@ -675,24 +666,24 @@ class Kfold_CV_Multimodal():
             train_loader = defaultdict(dict)
             train_loader['FFNN'] = self.build_dataloader_forCV([X_train_1, X_val_1], [y_train, y_val], sequence=False, 
                                                batch_size=batch_size, training=True,
-                                               augmentation=augmentation, type_augm_genfeatures=type_augm_genfeatures)
+                                               augmentation=self.augmentation, rebalancing=self.rebalancing)
             train_loader['CNN'] = self.build_dataloader_forCV([X_train_2, X_val_2], [y_train, y_val], sequence=True, 
                                                batch_size=batch_size, training=True,
-                                               augmentation=augmentation, type_augm_genfeatures=type_augm_genfeatures)
+                                               augmentation=self.augmentation, rebalancing=self.rebalancing)
 
             test_loader = defaultdict(dict)
             test_loader['FFNN'] = self.build_dataloader_forCV(X_test_1, y_test, sequence=False, 
                                                batch_size=batch_size, training=False,
-                                               augmentation=False)
+                                               augmentation=False, rebalancing=False)
             test_loader['CNN'] = self.build_dataloader_forCV(X_test_2, y_test, sequence=True, 
                                                batch_size=batch_size, training=False,
-                                               augmentation=False)
+                                               augmentation=False,rebalancing=False)
 
             # SISTEMA MODEL TESTING QUANDO CARICO MODELLO
             
             self.model_testing(train_loader, test_loader, num_epochs,
                                test_model_path, device, cell_line, task,
-                               checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{self.type_augm_genfeatures if self.augmentation else None}')
+                               checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test')
             
             self.i+=1
                 
@@ -701,15 +692,3 @@ class Kfold_CV_Multimodal():
         self.scores_dict['average_CV_AUPRC'] = avg_CV_AUPRC
         print(f'\n{n_folds}-FOLD CROSS-VALIDATION AUPRC TEST SCORE: {avg_CV_AUPRC}')
             
-
-
-#def plot_results(self):
- #       
-  #      for i in self.n_folds:
-   #         print(f'ITERATION N. {i}')
-    #        plot_F1_scores(self.scores_dict[f'trial_n_{i}'][f'AUPRC_train'],
-     #                         self.scores_dict[f'trial_n_{i}'][f'AUPRC_test'])
-            
-            
-            #plot_other_scores(self.scores_dict[f'iteration_n_{n_of_iterarion}'][f'AUPRC_precision_recall'])
-    

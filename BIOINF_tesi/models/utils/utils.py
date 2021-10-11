@@ -1,9 +1,10 @@
 import pandas as pd
 import numpy as np
 import seaborn as sns
+import itertools
 import matplotlib.pylab as plt
 
-import os
+import os, shutil
 import pickle
 from tqdm.auto import tqdm
 from sklearn.metrics import precision_recall_fscore_support, average_precision_score
@@ -15,6 +16,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from scipy.stats import ranksums
 
 
 
@@ -269,7 +271,6 @@ def output_size_from_model_params(model_params):
     
     n_layers = model_params['n_layers']
     input_size=256
-    tot_channels=1
 
     for i in range(n_layers):
         kernel_size = model_params[f'kernel_size_l{i}']
@@ -282,9 +283,9 @@ def output_size_from_model_params(model_params):
         output_size = size_out_convolution(output_size, maxpool_kernel_size, 0, maxpool_stride)
         input_size=output_size
 
-        tot_channels*=model_params[f'out_channels_l{i}']
+        out_channels=model_params[f'out_channels_l{i}']
         
-    return output_size*tot_channels
+    return output_size*out_channels
 
 
 
@@ -316,70 +317,83 @@ def drop_last_layers(model_state_dict, network_type):
 
 
 
-def select_augmented_models(results_dict, verbose=False):
-
-    d=defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+def select_augmented_models(results_dict, verbose=False, model_name='FFNN', augm_1='double', augm_2='smote'):
 
     for cell in results_dict.keys():
-        for task in results_dict[cell]:
-            if len(results_dict[cell][task].keys())>1:
-                for type_augm in results_dict[cell][task].keys():
-                    d[cell][task][type_augm]=[]
-                    for iterat in results_dict[cell][task][type_augm]:
-                        if iterat.startswith('iteration'):
-                            d[cell][task][type_augm].append(results_dict[cell][task][type_augm][iterat]['AUPRC_test'][-1])
+        for task in results_dict[cell].keys():
+            if set({f'{model_name}_{augm_1}',f'{model_name}_{augm_2}'}).issubset({*results_dict[cell][task].keys()}):
+                pval = ranksums(results_dict[cell][task][f'{model_name}_{augm_1}']['final_test_AUPRC_scores'], results_dict[cell][task][f'{model_name}_{augm_2}']['final_test_AUPRC_scores'])[1]
+                if verbose:
+                    print(f'\n{cell}')
+                    print(task)
+                    print(f'pvalue: {pval}')
 
-    for cell in d.keys():
-        for task in d[cell].keys():
-            pval = ranksums(d[cell][task]['FFNN_smote'], d[cell][task]['FFNN_double'])[1]
-            if verbose:
-                print(f'\n{cell}')
-                print(task)
-                print(f'pvalue: {pval}')
+                if pval<0.3 and results_dict[cell][task][f'{model_name}_{augm_2}']['average_CV_AUPRC'] >= results_dict[cell][task][f'{model_name}_{augm_1}']['average_CV_AUPRC']:
+                        results_dict[cell][task][model_name] = results_dict[cell][task][f'{model_name}_{augm_2}'].copy()
+                        results_dict[cell][task]['best_augmentation']=augm_2
+                        shutil.copy(f'models/{cell}_{task}_{model_name}_{augm_2}_TEST.pt', 
+                                      f'models/{cell}_{task}_{model_name}_TEST.pt')
+                        if verbose:
+                            print(f'Best augmentation method: {augm_2}')
 
-            if pval<0.3 and results_dict[cell][task]['FFNN_smote']['average_CV_AUPRC'] >= results_dict[cell][task]['FFNN_double']['average_CV_AUPRC']:
-                    results_dict[cell][task]['FFNN'] = results_dict[cell][task]['FFNN_smote']
-                    os.rename(f'models/{cell}_{task}_FFNN_smote_TEST.pt', 
-                              f'models/{cell}_{task}_FFNN_TEST.pt')
+                else:
+                    results_dict[cell][task][model_name] = results_dict[cell][task][f'{model_name}_{augm_1}'].copy()
+                    results_dict[cell][task]['best_augmentation']=augm_2 #SISTEMA IN CV
+                    shutil.copy(f'models/{cell}_{task}_{model_name}_{augm_1}_TEST.pt', 
+                                          f'models/{cell}_{task}_{model_name}_TEST.pt')
                     if verbose:
-                        print('Best augmentation method: smote')
-            else:
-                results_dict[cell][task]['FFNN'] = results_dict[cell][task]['FFNN_double']
-                os.rename(f'models/{cell}_{task}_FFNN_double_TEST.pt', 
-                              f'models/{cell}_{task}_FFNN_TEST.pt')
+                        print(f'Best augmentation method: {augm_1}')
+
+    return results_dict
+
+
+
+import seaborn as sns
+import itertools
+
+
+import seaborn as sns
+import itertools
+
+
+def plot_scores(cells, models=['FFNN','CNN'], k=3):
+
+    TASKS=[]
+    AUPRC=np.empty([0])
+    MODEL=[]
+    TEST_TRAIN=[]
+    CELLS=[]
+    
+    if isinstance(cells, str):
+        cells=[cells]
+        
+    for cell in cells:
+        for task in results_dict[cell].keys():    
+            for model in results_dict[cell][task].keys():
+                if model in models:
                     
-                if verbose:
-                    print('Best augmentation method: double')
+                    AUPRC=np.append(AUPRC, results_dict[cell][task][model]['final_train_AUPRC_scores'])
+                    AUPRC=np.append(AUPRC, results_dict[cell][task][model]['final_test_AUPRC_scores'])
+                    TEST_TRAIN.append(['train']*k), TEST_TRAIN.append(['test']*k) 
+                    MODEL.append([model]*k*2)
+                    TASKS.append([task]*k*2)
+                    CELLS.append([cell]*k*2)
+                    
+                       # sns.barplot(y=y)
+    MODEL=list(itertools.chain(*MODEL))
+    TEST_TRAIN=list(itertools.chain(*TEST_TRAIN))
+    TASKS=list(itertools.chain(*TASKS))
+    CELLS=list(itertools.chain(*CELLS))
+    data = {'AUPRC':AUPRC, 'model':MODEL, 'test_train':TEST_TRAIN, 'tasks':TASKS, 'cell':CELLS}
+    p = pd.DataFrame.from_dict(data)
+    
+    colors=['#80d4ff','#ff3385']
+    colors2=['#ff80d5','#aaff00']
+    palette=sns.color_palette(colors2)
 
-
-
-
-def select_best_model(results_dict, model_1, model_2, verbose=False):
-    d=defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-
-    for cell in results_dict.keys():
-        for task in results_dict[cell]:
-            if len(results_dict[cell][task].keys())>1:
-                for model in [model_1.__name__, model_2.__name__]:
-                    d[cell][task][model]=[]
-                    for iterat in results_dict[cell][task][model]:
-                        if iterat.startswith('iteration'):
-                            d[cell][task][model].append(results_dict[cell][task][model][iterat]['AUPRC_test'][-1])
-
-    return d
-    for cell in d.keys():
-        for task in d[cell].keys():
-            pval = ranksums(d[cell][task][model_1.__name__], d[cell][task][model_2.__name__])[1]
-            if verbose:
-                print(f'\n{cell}')
-                print(task)
-                print(f'pvalue: {pval}')
-
-            if pval<0.3 and results_dict[cell][task][model_2.__name__]['average_CV_AUPRC'] >= results_dict[cell][task][model_1.__name__]['average_CV_AUPRC']:
-                if verbose:
-                    print(f'Best model: {model_2.__name__}')
-                    return model_2
-            else:   
-                if verbose:
-                    print(f'Best model: {model_1.__name__}')
-                    return model_1
+    sns.set_theme(style="whitegrid", font_scale=1.3)
+    plot = sns.catplot(y='tasks', x='AUPRC',hue='test_train',row='model', data=p, kind="bar", orient='h',
+           height=5, aspect=2, palette=colors2 , legend_out=False, col='cell')  #Set2 #cool
+    plot.set_ylabels('', fontsize=15)
+    plot.set(xlim=(0,1))
+    plot.set_titles('{row_name}' ' | ' '{col_name}')

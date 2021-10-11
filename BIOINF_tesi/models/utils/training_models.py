@@ -24,14 +24,13 @@ from optuna.samplers import TPESampler, RandomSampler
 from .utils import (EarlyStopping, F1_precision_recall, AUPRC, size_out_convolution, 
     weight_reset, get_loss_weights_from_dataloader, get_loss_weights_from_labels, 
     get_input_size, plot_other_scores, plot_F1_scores, save_best_model)
-from BIOINF_tesi.data_pipe.utils import data_augmentation
+from BIOINF_tesi.data_pipe.utils import data_rebalancing
 from BIOINF_tesi.data_pipe.dataprepare import Data_Prepare, Dataset_Wrap, BalancePos_BatchSampler
 
 
 def fit(model, 
         train_loader, 
         test_loader, 
-        criterion,
         device,
         optimizer=None, 
         num_epochs=100,
@@ -47,7 +46,6 @@ def fit(model,
     model (torch.nn.Module): neural network model.
     train_loader (DataLoader): training DataLoader object.
     test_loader (DataLoader): testing DataLoader object.
-    criterion: loss function for training the model.
     device: 'CPU' or 'CUDA'.
     optimizer (torch.optim): optimization algorithm for training the model. 
     num_epochs (int): number of epochs.
@@ -112,6 +110,9 @@ def fit(model,
                 data.to(device)
 
                 target = target.reshape(-1)
+                
+                w_pos,w_neg = get_loss_weights_from_labels(target)
+                criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_neg, w_pos]))
                 # clear the gradients of all optimized variables
                 optimizer.zero_grad()
                 # forward pass: compute predicted outputs by passing inputs to the model
@@ -139,6 +140,8 @@ def fit(model,
                 target.to(device)
                 data.to(device)
 
+                w_pos,w_neg = get_loss_weights_from_labels(target)
+                criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_neg, w_pos]))
                 # forward pass: compute predicted outputs by passing inputs to the model
                 output = model(data.double())
                 # calculate the batch loss as the sum of all the losses
@@ -227,7 +230,6 @@ class Param_Search():
                model,
                train_loader, 
                test_loader,
-               criterion,
                num_epochs,
                study_name,
                device,
@@ -238,7 +240,6 @@ class Param_Search():
         self.model_ = copy.deepcopy(model)
         self.train_loader = train_loader
         self.test_loader = test_loader
-        self.criterion = criterion
         self.num_epochs = num_epochs
         self.study_name = study_name
         self.device = device
@@ -299,6 +300,9 @@ class Param_Search():
             self.model.train()
             for data, target in self.train_loader:
                 
+                w_pos,w_neg = get_loss_weights_from_labels(target)
+                self.criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_neg, w_pos]))
+
                 #target = target.reshape(-1,1)
                 # clear the gradients of all optimized variables
                 optimizer.zero_grad()
@@ -320,6 +324,9 @@ class Param_Search():
             self.model.eval()
             for data, target in self.test_loader:  
                 
+                w_pos,w_neg = get_loss_weights_from_labels(target)
+                self.criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_neg, w_pos]))
+
                 # forward pass: compute predicted outputs by passing inputs to the model
                 output = self.model(data.double().to(self.device))
                 # calculate the batch loss as a sum of the single losses
@@ -441,13 +448,16 @@ class Kfold_CV():
     def __init__(self):
         
         self.scores_dict = defaultdict(dd)
+        self.scores_dict['final_test_AUPRC_scores'] = []
+        self.scores_dict['final_train_AUPRC_scores'] = []
+
         self.model_ = []
         self.optimizer = []
         self.best_params = defaultdict(dict)
     
     
     def build_dataloader_forCV(self, X, y, sequence, batch_size, training=True,
-                        augmentation=True, type_augm_genfeatures='smote', n_neighbors=5):
+                        rebalancing=True, type_augm_genfeatures='smote', n_neighbors=5):
 
         if isinstance(X, list):
             for x_ in X:
@@ -462,10 +472,10 @@ class Kfold_CV():
         else:
             X.reset_index(drop=True, inplace=True), y.reset_index(drop=True, inplace=True)
 
-        if training and augmentation:
+        if training and rebalancing:
             # augment data
-            X, y = data_augmentation(X, y, sequence=sequence, type_augm_genfeatures=type_augm_genfeatures,
-                threshold=0.1)
+            X, y = data_rebalancing(X, y, sequence=sequence, type_augm_genfeatures=type_augm_genfeatures,
+                rebalance_threshold=0.1)
 
         # build wrapper
         wrap = Dataset_Wrap(X, y, sequence=sequence)
@@ -474,7 +484,6 @@ class Kfold_CV():
             # create balanced dataloader for training set
             return DataLoader(dataset = wrap, 
                        batch_sampler = BalancePos_BatchSampler(wrap, batch_size= batch_size))
-            #return DataLoader(dataset = wrap, batch_size= batch_size, shuffle=True)
         else:
             # create dataloader for test set
             return DataLoader(dataset = wrap, batch_size= batch_size*2, shuffle=True)
@@ -485,7 +494,7 @@ class Kfold_CV():
                      study_name, hp_model_path, device, sampler):
             
             param_search = Param_Search(model=self.model_, train_loader=train_loader, 
-                                        test_loader=test_loader, criterion=self.criterion, 
+                                        test_loader=test_loader, 
                                         num_epochs=num_epochs, device=device, sampler=sampler,
                                         n_trials=3, study_name=study_name)
 
@@ -512,8 +521,8 @@ class Kfold_CV():
                 
             # save the params of the best hp tuning model (for loading in embracenet) # USEFUL?
             self.hp_score.append(param_search.trial_value)
-            if param_search.trial_value == max(self.hp_score):    
-                param_search.save_best_model(f'{hp_model_path}.pt') 
+            #if param_search.trial_value == max(self.hp_score):    
+             #   param_search.save_best_model(f'{hp_model_path}.pt') 
 
     
     
@@ -522,7 +531,7 @@ class Kfold_CV():
         
         AUPRC_train, AUPRC_test, other_scores = fit(model=self.model_, 
                                     train_loader=train_loader, #OTHER_SCORES
-                                    test_loader=test_loader, criterion=self.criterion,
+                                    test_loader=test_loader, 
                                     device=device, optimizer=self.optimizer, num_epochs=num_epochs, 
                                     patience=5, verbose=False, 
                                     checkpoint_path=f'{checkpoint_path}.pt')
@@ -532,7 +541,13 @@ class Kfold_CV():
 
         self.scores_dict[f'iteration_n_{self.i}'][f'F1_precision_recall'] = other_scores
             
-        print(f'AUPRC test score: {AUPRC_test[-1]}\n\n')
+        final_test_AUPRC_score = AUPRC_test[-1]
+        self.scores_dict['final_test_AUPRC_scores'].append(final_test_AUPRC_score)
+        final_train_AUPRC_score = AUPRC_train[-1]
+        self.scores_dict['final_train_AUPRC_scores'].append(final_train_AUPRC_score)
+
+
+        print(f'AUPRC test score: {final_test_AUPRC_score}\n\n')
         #print(f'F1: {other_scores[0]}, Precision: {other_scores[1]}, Recall: {other_scores[2]}')
             
         # save the params of the best testing model (for loading in embracenet)
@@ -542,8 +557,7 @@ class Kfold_CV():
                         'model_state_dict': self.model_.state_dict(),
                         'model_params': self.best_params[self.i]
                     }, f'models/{test_model_path}.pt')
-    
-    
+
     
     def __call__(self,
             build_dataloader_pipeline, 
@@ -552,7 +566,7 @@ class Kfold_CV():
             task=None,
             sequence=False, 
             model=None,
-            augmentation=False,
+            rebalancing=False,
             type_augm_genfeatures='smote',
             random_state=321,
             n_folds=4,
@@ -566,7 +580,7 @@ class Kfold_CV():
         
         self.n_folds = n_folds
         self.type_augm_genfeatures = type_augm_genfeatures
-        self.augmentation = augmentation
+        self.rebalancing = rebalancing
         self.sequence = sequence
     
         self.avg_score = []
@@ -576,14 +590,6 @@ class Kfold_CV():
         kf, X, y = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=sequence,
                                                       n_folds=n_folds, random_state=random_state)
         
-        w_pos,w_neg = get_loss_weights_from_labels(y)
-
-        if w_neg<0.1:
-            w_pos=0.9
-            w_neg=0.1
-
-        self.criterion=nn.CrossEntropyLoss(weight=torch.tensor([w_neg, w_neg]))
-
         
         self.i=1
         for train_index, test_index in kf.split(X):
@@ -604,10 +610,10 @@ class Kfold_CV():
             
             train_loader = self.build_dataloader_forCV(X_train, y_train, sequence=sequence, 
                                                batch_size=batch_size, training=True,
-                                               augmentation=augmentation, type_augm_genfeatures=type_augm_genfeatures)
+                                               rebalancing=rebalancing, type_augm_genfeatures=type_augm_genfeatures)
             test_loader = self.build_dataloader_forCV(X_val, y_val, sequence=sequence, 
                                                batch_size=batch_size, training=False,
-                                               augmentation=False)
+                                               rebalancing=False)
             
             self.hyper_tuning(train_loader, test_loader, num_epochs,
                               study_name, hp_model_path, device, sampler)
@@ -617,13 +623,13 @@ class Kfold_CV():
             
             train_loader = self.build_dataloader_forCV([X_train, X_val], [y_train, y_val], sequence=sequence, 
                                                batch_size=batch_size, training=True,
-                                               augmentation=augmentation, type_augm_genfeatures=type_augm_genfeatures)
+                                               rebalancing=rebalancing, type_augm_genfeatures=type_augm_genfeatures)
             test_loader = self.build_dataloader_forCV(X_test, y_test, sequence=sequence, 
                                                batch_size=batch_size, training=False,
-                                               augmentation=False)
+                                               rebalancing=False)
             
             self.model_testing(train_loader, test_loader, num_epochs,
-                               test_model_path, device, checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{self.type_augm_genfeatures if self.augmentation else None}')
+                               test_model_path, device, checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{self.type_augm_genfeatures if self.rebalancing and not self.sequence else None}')
             
             self.i+=1
                 
