@@ -405,7 +405,7 @@ def reverse_strand_augment(X, y, rebalance=True, rebalance_threshold=None,
     imbalance=get_imbalance(y)
     # if the data was imbalanced, we cannot double all the negatives, but we need to
     #take a subsample of them so that the rebalancing threshold is satisfied.
-    if rebalance and imbalance>=rebalance_threshold: 
+    if rebalance and imbalance>rebalance_threshold: 
         n_obs = compute_rebalancing_obs(0.1, y=y)
         np.random.seed(random_state)
         index = np.random.randint(0, len(X_), n_obs)
@@ -456,7 +456,7 @@ def data_rebalancing(X, y, sequence=False, type_augm_genfeatures='smote',
 
 
     imbalance = get_imbalance(y)
-    if imbalance <= rebalance_threshold:
+    if imbalance < rebalance_threshold:
         
         if sequence: 
             X,y = reverse_strand_rebalance(X, y, rebalance_threshold, random_state)
@@ -501,10 +501,9 @@ def data_augmentation(X, y, sequence=False, rebalancing=True,
     """
 
     len_X_pre = len(X)
-    if rebalancing:
+    imbalance = get_imbalance(y)
 
-        imbalance = get_imbalance(y)
-        if imbalance <= rebalance_threshold:
+    if rebalancing and imbalance < rebalance_threshold:
             
             if sequence: 
                 X,y = reverse_strand_augment(X, y, rebalance=True, rebalance_threshold=rebalance_threshold, 
@@ -536,7 +535,7 @@ def data_augmentation(X, y, sequence=False, rebalancing=True,
                 oversample_SMOTE = SMOTE(k_neighbors=5, sampling_strategy = sampling_strategy)
                 X, y = oversample_SMOTE.fit_resample(X, y.ravel())
 
-                assert( len_X_pre == len(X))
+                assert( len_X_pre*2 == len(X))
                 return X.reset_index(drop=True), pd.Series(y)
 
         return X, y
@@ -555,10 +554,11 @@ def compute_rebalancing_obs(rebalance_threshold=0.1, y=None, n_pos=None, n_neg=N
     elif n_pos and n_neg:
         imbalance = get_imbalance(n_pos=n_pos, n_neg=n_neg)
 
-
-    if imbalance <= rebalance_threshold:
-        return int((n_neg*rebalance_threshold) - n_pos)
-    else:
+    if imbalance > rebalance_threshold:
         return int((n_pos/rebalance_threshold) - n_neg)
+    #elif imbalance < rebalance_threshold: #?
+        #return int((n_neg*rebalance_threshold) - n_pos)
+    else:
+        return 0
 
 

@@ -494,6 +494,7 @@ class Kfold_CV_Multimodal():
 
         if training and augmentation and rebalancing:
             # augment data
+            # CHECK DATA_AUGMENTATION FUNCTION
             X, y = data_augmentation(X, y, sequence=sequence, rebalancing=True,
                 rebalance_threshold=0.1)
 
@@ -635,7 +636,6 @@ class Kfold_CV_Multimodal():
             X_train_2, X_val_2, y_train, y_val = train_test_split(X_train_2, y_train,
                                                               test_size=1/self.n_folds,
                                                               random_state=random_state, shuffle=True) 
-
             self.model_ = model
             
             print('\n===============> HYPERPARAMETERS TUNING')

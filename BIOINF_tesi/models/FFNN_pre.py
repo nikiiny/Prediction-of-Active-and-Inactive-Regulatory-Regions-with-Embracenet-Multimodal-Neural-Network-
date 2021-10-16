@@ -7,32 +7,43 @@ import numpy as np
 
 class FFNN_pre(nn.Module): 
 
-    def __init__(self, in_features, torch_saved_state, device):
+    def __init__(self, trial, in_features, device, classes=2):
         super(FFNN_pre, self).__init__()
+        self.trial = trial
+        self.classes = classes
         self.device = device
         self.model = []
-
-        model_params = torch_saved_state['model_params']
-        n_layers = model_params['n_layers']
+        
+        # We optimize the number of layers, hidden units and dropout ratio in each layer.
+        n_layers = self.trial.suggest_int("FFNN_n_layers", 1, 4)
         layers = []
 
         for i in range(n_layers):
-
-            out_features = model_params[f'n_units_l{i}']
-
+            if i==0:
+                out_features = self.trial.suggest_categorical("FFNN_n_units_l{}".format(i), [32, 64, 128, 256])
+            elif i==1:
+                out_features = self.trial.suggest_categorical("FFNN_n_units_l{}".format(i), [16, 32, 64, 128])
+            elif i==2:
+                out_features = self.trial.suggest_categorical("FFNN_n_units_l{}".format(i), [4, 16, 32, 64])
+            elif i==3:
+                out_features = self.trial.suggest_categorical("FFNN_n_units_l{}".format(i), [4, 16, 32])
+                
             layers.append(nn.Linear(in_features, out_features))
             layers.append(nn.ReLU())
-            layers.append(nn.Dropout(model_params[f'dropout_l{i}']))
+            
+            if i<2:
+                dropout = self.trial.suggest_categorical("FFNN_dropout_l{}".format(i), [0.0, 0.2, 0.3, 0.4])
+                layers.append(nn.Dropout(dropout))
+            elif i>=2:
+                dropout = self.trial.suggest_categorical("FFNN_dropout_l{}".format(i), [0.0, 0.4, 0.5])
+                layers.append(nn.Dropout(dropout))
+                
                 
             in_features = out_features
 
-        #layers.append(nn.Linear(in_features, self.classes))
-
+        self.output_size = out_features
         self.model = nn.Sequential(*layers)
     
     def forward(self, x):
         
-        out = self.model(x)
-        out = out.reshape(out.size(0), -1) 
-
-        return out.to(self.device)
+        return self.model(x).to(self.device)

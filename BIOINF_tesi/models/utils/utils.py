@@ -356,7 +356,7 @@ import seaborn as sns
 import itertools
 
 
-def plot_scores(cells, models=['FFNN','CNN'], k=3):
+def plot_scores(cells, models=['FFNN','CNN'], k=3, palette=1):
 
     TASKS=[]
     AUPRC=np.empty([0])
@@ -366,7 +366,11 @@ def plot_scores(cells, models=['FFNN','CNN'], k=3):
     
     if isinstance(cells, str):
         cells=[cells]
-        
+    
+    with open ('results_dict.pickle', 'rb') as fin:
+        results_dict = pickle.load(fin)
+        results_dict = defaultdict(lambda: defaultdict(dict), results_dict)
+
     for cell in cells:
         for task in results_dict[cell].keys():    
             for model in results_dict[cell][task].keys():
@@ -387,13 +391,15 @@ def plot_scores(cells, models=['FFNN','CNN'], k=3):
     data = {'AUPRC':AUPRC, 'model':MODEL, 'test_train':TEST_TRAIN, 'tasks':TASKS, 'cell':CELLS}
     p = pd.DataFrame.from_dict(data)
     
-    colors=['#80d4ff','#ff3385']
-    colors2=['#ff80d5','#aaff00']
-    palette=sns.color_palette(colors2)
+    PALETTE = [
+                sns.color_palette(['#80d4ff','#ff3385']),
+                sns.color_palette(['#ff80d5','#aaff00']),
+                'Set2'
+            ]
 
     sns.set_theme(style="whitegrid", font_scale=1.3)
     plot = sns.catplot(y='tasks', x='AUPRC',hue='test_train',row='model', data=p, kind="bar", orient='h',
-           height=5, aspect=2, palette=colors2 , legend_out=False, col='cell')  #Set2 #cool
+           height=5, aspect=2, palette=PALETTE[palette] , legend_out=False, col='cell')  
     plot.set_ylabels('', fontsize=15)
     plot.set(xlim=(0,1))
     plot.set_titles('{row_name}' ' | ' '{col_name}')
