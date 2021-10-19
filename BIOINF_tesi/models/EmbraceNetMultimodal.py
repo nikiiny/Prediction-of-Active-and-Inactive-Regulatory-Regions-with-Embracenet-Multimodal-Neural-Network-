@@ -112,30 +112,11 @@ class EmbraceNetMultimodal(nn.Module):
         self.embracenet_dropout=embracenet_dropout
         self.args = args
 
-        torch_saved_state_FFNN = torch.load(f'models/{cell_line}_{task}_FFNN_TEST.pt', map_location=torch.device(device))
-        torch_saved_state_CNN = torch.load(f'models/{cell_line}_{task}_CNN_TEST.pt', map_location=torch.device(device))
-        
         # 1) pre neural networks
-        self.FFNN = FFNN_pre(self.trial, in_features_FFNN, device=self.device) #?
-        self.CNN = CNN_pre(self.trial, device=self.device) #?
-
-        # load previously optimised models to find optimal hyperparameters. 
-        # first remove last layers
-        #model_state_dict_FFNN = drop_last_layers(torch_saved_state_FFNN['model_state_dict'], 'FFNN')
-        #model_state_dict_CNN = drop_last_layers(torch_saved_state_CNN['model_state_dict'], 'CNN')
-        # then load into empty networks
-        #self.FFNN.load_state_dict(model_state_dict_FFNN)
-        #self.CNN.load_state_dict(model_state_dict_CNN)
-
-        # freeze layers
-        #for param in self.FFNN.parameters():
-         #   param.requires_grad = False
-        #for param in self.CNN.parameters():
-         #   param.requires_grad = False
+        self.FFNN = FFNN_pre(self.trial, in_features_FFNN, device=self.device) 
+        self.CNN = CNN_pre(self.trial, device=self.device) 
         
-        #last_layer_FFNN = torch_saved_state_FFNN['model_params']['n_layers']-1
         self.FFNN_pre_output_size = self.FFNN.output_size
-        
         self.CNN_pre_output_size = self.CNN.output_size
 
         
@@ -155,14 +136,14 @@ class EmbraceNetMultimodal(nn.Module):
 
         for i in range(n_post_layers):
             if i==0:
-                out_features = self.trial.suggest_categorical("EMBRACENET_n_units_l{}".format(i), [32, 64, 128, 256])
+                out_features = self.trial.suggest_categorical("EMBRACENET_n_units_l{}".format(i), [32, 64, 128, 256, 512])
             elif i==1:
-                out_features = self.trial.suggest_categorical("EMBRACENET_n_units_l{}".format(i), [16, 32, 64, 128])
+                out_features = self.trial.suggest_categorical("EMBRACENET_n_units_l{}".format(i), [16, 32, 64, 128, 256])
                 
             post_layers.append(nn.Linear(in_features, out_features))
             post_layers.append(nn.ReLU())
             
-            dropout = self.trial.suggest_categorical("EMBRACENET_dropout_l{}".format(i), [0.0, 0.3, 0.5, 0.7])
+            dropout = self.trial.suggest_categorical("EMBRACENET_dropout_l{}".format(i), [0.0, 0.2, 0.3, 0.5])
             post_layers.append(nn.Dropout(dropout))
                 
             in_features = out_features

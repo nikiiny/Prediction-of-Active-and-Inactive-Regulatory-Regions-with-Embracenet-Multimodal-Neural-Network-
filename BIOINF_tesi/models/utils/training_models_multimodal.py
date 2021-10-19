@@ -246,7 +246,7 @@ class Param_Search_Multimodal():
                results_dict,
                sampler='BO',
                n_trials=4,
-               storage = 'SA_optuna_tuning.db'
+               storage = 'SA_optuna_tuning.db' #cambia
                ):
         self.model_ = copy.deepcopy(model)
         self.train_loader = train_loader
@@ -618,9 +618,8 @@ class Kfold_CV_Multimodal():
                                                       n_folds=n_folds, random_state=random_state)
     
 
-        
-        self.i=1
-        for train_index, test_index in kf.split(X_1):
+        for i, (train_index, test_index) in enumerate(kf.split(X_1)):
+            self.i = i+1
             
             study_name = study_name + '_' + str(self.i)
 
@@ -685,7 +684,6 @@ class Kfold_CV_Multimodal():
                                test_model_path, device, cell_line, task,
                                checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test')
             
-            self.i+=1
                 
         
         avg_CV_AUPRC = np.round(sum(self.avg_score)/n_folds, 5)
