@@ -29,6 +29,9 @@ from .utils import (EarlyStopping, F1_precision_recall, AUPRC, size_out_convolut
 from BIOINF_tesi.data_pipe.dataprepare import Data_Prepare, Dataset_Wrap, BalancePos_BatchSampler
 from BIOINF_tesi.data_pipe.utils import data_augmentation
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+g_gpu = torch.Generator(device)
+
 
 
 def fit_multimodal(model, 
@@ -93,6 +96,10 @@ def fit_multimodal(model,
         F1_precision_recall_test_scores = []
     
         # convert model data type to double
+        try:
+            model_name = model.__name__
+        except:
+            model_name = type(model).__name__ 
         model = model.double().to(device)
 
         # define early stopping
@@ -114,6 +121,7 @@ def fit_multimodal(model,
                                           train_loader['CNN']):
                 x_1, target = load1
                 x_2, _ = load2
+                assert(torch.eq(target, _).all())
                 assert(len(x_1)==len(x_2))
 
                 w_pos,w_neg = get_loss_weights_from_labels(target)
@@ -123,7 +131,10 @@ def fit_multimodal(model,
                 # clear the gradients of all optimized variables
                 optimizer.zero_grad()
                 # forward pass: compute predicted outputs by passing inputs to the model
-                output = model([x_1.double(), x_2.double()], is_training=True)
+                if model_name == 'EmbraceNetMultimodal':
+                    output = model([x_1.double(), x_2.double()], is_training=True)
+                else:
+                    output = model([x_1.double(), x_2.double()])
                 # calculate the batch loss as the sum of all the losses
                 try:
                     loss = criterion.double().to(device)(output.float(), target.squeeze()) 
@@ -146,6 +157,7 @@ def fit_multimodal(model,
                                           test_loader['CNN']):
                 x_1, target = load1
                 x_2, _, = load2
+                assert(torch.eq(target, _).all())
                 assert(len(x_1)==len(x_2))
 
                 w_pos,w_neg = get_loss_weights_from_labels(target)
@@ -311,10 +323,12 @@ class Param_Search_Multimodal():
             self.model.to(self.device)
 
             self.model.train()
-            for load1, load2 in zip(self.test_loader['FFNN'],
-                                          self.test_loader['CNN']):
+            i=0
+            for load1, load2 in zip(self.train_loader['FFNN'],
+                                          self.train_loader['CNN']):
                 x_1, target = load1
                 x_2, _, = load2
+                assert(torch.eq(target, _).all())
                 assert(len(x_1)==len(x_2))
 
                 w_pos,w_neg = get_loss_weights_from_labels(target)
@@ -323,7 +337,10 @@ class Param_Search_Multimodal():
                 # clear the gradients of all optimized variables
                 optimizer.zero_grad()
                 # forward pass: compute predicted outputs by passing inputs to the model
-                output = self.model([x_1.double(), x_2.double()], is_training=True)
+                if self.model_name == 'EmbraceNetMultimodal':
+                    output = self.model([x_1.double(), x_2.double()], is_training=True)
+                else:
+                    output = self.model([x_1.double(), x_2.double()])
                 # calculate the batch loss as a sum of the single losses
                 try:
                     loss = self.criterion.double().to(self.device)(output.float().to(self.device), target.squeeze().to(self.device)) 
@@ -494,21 +511,20 @@ class Kfold_CV_Multimodal():
 
         if training and augmentation and rebalancing:
             # augment data
-            # CHECK DATA_AUGMENTATION FUNCTION
             X, y = data_augmentation(X, y, sequence=sequence, rebalancing=True,
                 rebalance_threshold=0.1)
 
         # build wrapper
         wrap = Dataset_Wrap(X, y, sequence=sequence)
-        
         if training:    
             # create balanced dataloader for training set
             return DataLoader(dataset = wrap, 
                        batch_sampler = BalancePos_BatchSampler(wrap, batch_size= batch_size))
-            #return DataLoader(dataset = wrap, batch_size= batch_size, shuffle=True)
+            return DataLoader(dataset = wrap, batch_size= batch_size, shuffle=True)
         else:
             # create dataloader for test set
-            return DataLoader(dataset = wrap, batch_size= batch_size*2, shuffle=True)    
+            return DataLoader(dataset = wrap, batch_size= batch_size*2, shuffle=True,
+                            generator=torch.Generator(self.device).manual_seed(self.random_state+30)) #########   
         
         
     def hyper_tuning(self, train_loader, test_loader, num_epochs, cell_line, task,
@@ -602,6 +618,8 @@ class Kfold_CV_Multimodal():
         self.n_folds = n_folds
         self.augmentation = augmentation
         self.rebalancing = rebalancing
+        self.random_state = random_state
+        self.device = device
 
         with open ('results_dict.pickle', 'rb') as fin:
             results_dict = pickle.load(fin)
@@ -613,9 +631,9 @@ class Kfold_CV_Multimodal():
         
         data_class = build_dataloader_pipeline.data_class 
         kf, X_1, y = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=False, 
-                                                      n_folds=n_folds, random_state=random_state)
+                                                      n_folds=n_folds, random_state=self.random_state)
         _, X_2, _ = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=True, 
-                                                      n_folds=n_folds, random_state=random_state)
+                                                      n_folds=n_folds, random_state=self.random_state)
     
 
         for i, (train_index, test_index) in enumerate(kf.split(X_1)):
@@ -631,22 +649,23 @@ class Kfold_CV_Multimodal():
             
             X_train_1, X_val_1, _, _ = train_test_split(X_train_1, y_train,
                                                               test_size=1/self.n_folds,
-                                                              random_state=random_state, shuffle=True) 
+                                                              random_state=self.random_state, shuffle=True) 
             X_train_2, X_val_2, y_train, y_val = train_test_split(X_train_2, y_train,
                                                               test_size=1/self.n_folds,
-                                                              random_state=random_state, shuffle=True) 
+                                                              random_state=self.random_state, shuffle=True) 
             self.model_ = model
             
             print('\n===============> HYPERPARAMETERS TUNING')
             
             train_loader = defaultdict(dict)
+
+      
             train_loader['FFNN'] = self.build_dataloader_forCV(X_train_1, y_train,
                                                batch_size=batch_size, training=True, sequence=False,
                                                augmentation=self.augmentation, rebalancing=self.rebalancing)
             train_loader['CNN'] = self.build_dataloader_forCV(X_train_2, y_train,
                                                batch_size=batch_size, training=True, sequence=True,
                                                augmentation=self.augmentation, rebalancing=self.rebalancing)
-
             test_loader = defaultdict(dict)
             test_loader['FFNN'] = self.build_dataloader_forCV(X_val_1, y_val, sequence=False,
                                                batch_size=batch_size, training=False,

@@ -360,6 +360,7 @@ def reverse_strand_rebalance(X, y, rebalance_threshold, random_state):
     np.random.seed(random_state)
     n_obs = compute_rebalancing_obs(rebalance_threshold, y=y)
     index = np.random.randint(0, len(X_), n_obs)
+    # append the augmented positive to the original data
     X = X.append(X_.iloc[index])
     y = y.append(y_.iloc[index])
 
@@ -389,18 +390,17 @@ def reverse_strand_augment(X, y, rebalance=True, rebalance_threshold=None,
     len_X_pre = len(X)
     # positive examples
     index_ = y[y==1].index
-    X_ = X.iloc[index_].copy()
-    X_ = X_.apply(lambda x: reverse_strand(x))
-    X_.reset_index(drop=True, inplace=True)
-    y_ = pd.Series([1]*len(index_))
-    X=X.append(X_)
-    y=y.append(y_)
+    X_pos = X.iloc[index_].copy()
+    X_pos = X_pos.apply(lambda x: reverse_strand(x))
+    X_pos.reset_index(drop=True, inplace=True)
+    y_pos = pd.Series([1]*len(index_))
+    
 
     # negative examples
     index_ = y[y==0].index
-    X_ = X.iloc[index_].copy()
-    X_ = X_.apply(lambda x: reverse_strand(x))
-    X_.reset_index(drop=True, inplace=True)
+    X_neg = X.iloc[index_].copy()
+    X_neg = X_neg.apply(lambda x: reverse_strand(x))
+    X_neg.reset_index(drop=True, inplace=True)
 
     imbalance=get_imbalance(y)
     # if the data was imbalanced, we cannot double all the negatives, but we need to
@@ -408,16 +408,29 @@ def reverse_strand_augment(X, y, rebalance=True, rebalance_threshold=None,
     if rebalance and imbalance>rebalance_threshold: 
         n_obs = compute_rebalancing_obs(0.1, y=y)
         np.random.seed(random_state)
-        index = np.random.randint(0, len(X_), n_obs)
-        X=X.append(X_.iloc[index])
-        y=y.append(pd.Series([0]*n_obs))
+        index = np.random.randint(0, len(X_neg), n_obs)
+        y_neg = pd.Series([0]*n_obs)
+
+        # append the augmented negative to the original data
+        X=X.append(X_neg.iloc[index])
+        y=y.append(y_neg)
+        # append the augmented positive to the original data
+        X=X.append(X_pos)
+        y=y.append(y_pos)
+        # NB: this is the correct order since when SMOTE augment data, first it appends
+        # 0 then 1 to the original data
+
 
         assert (get_imbalance(y) == rebalance_threshold)
 
     else:
-        y_ = pd.Series([0]*len(index_))
-        X=X.append(X_)
-        y=y.append(y_)
+        y_neg = pd.Series([0]*len(index_))
+        # append the augmented negative to the original data
+        X=X.append(X_neg.iloc[index])
+        y=y.append(y_neg)
+        # append the augmented positive to the original data
+        X=X.append(X_pos)
+        y=y.append(y_pos)
         assert (len_X_pre*2 == len(X))
 
     assert (len(X) == len(y))
@@ -430,7 +443,8 @@ def reverse_strand_augment(X, y, rebalance=True, rebalance_threshold=None,
 def data_rebalancing(X, y, sequence=False, type_augm_genfeatures='smote', 
                         rebalance_threshold=0.1, random_state=123):
     """
-    Performs data rebalancing through augmentation. ........ comment
+    Performs data rebalancing through augmentation. The positive data points
+    augmented to rebalance the dataset are appended to the original data
     
     Attributes:
     X (pd.DataFrame): data.
@@ -475,8 +489,6 @@ def data_rebalancing(X, y, sequence=False, type_augm_genfeatures='smote',
     else:
         return X, y
     
-
-
 
 
 def data_augmentation(X, y, sequence=False, rebalancing=True, 

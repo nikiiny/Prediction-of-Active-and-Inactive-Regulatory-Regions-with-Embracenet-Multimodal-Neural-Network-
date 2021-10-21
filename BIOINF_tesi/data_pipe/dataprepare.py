@@ -583,7 +583,7 @@ class Build_DataLoader_Pipeline():
         loader_train = DataLoader(dataset = train_wrap, 
                                   batch_sampler = BalancePos_BatchSampler(train_wrap, batch_size= batch_size))
         loader_test = DataLoader(dataset = test_wrap, batch_size= batch_size*2, shuffle=True,
-                                    generator = g_gpu.manual_seed(random_state+30))
+                                    generator = torch.Generator(self.device).manual_seed(self.random_state+30))
             
 
 
