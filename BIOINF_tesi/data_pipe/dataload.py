@@ -5,9 +5,8 @@ import pandas as pd
 import numpy as np
 
 
-TASKS = ['active_E_vs_inactive_E', 'active_P_vs_inactive_P', 
-                        'active_E_vs_active_P', 'inactive_E_vs_inactive_P',
-                        'active_EP_vs_inactive_rest']
+TASKS = ['active_E_vs_inactive_E', 'active_P_vs_inactive_P', 'active_E_vs_active_P', 
+            'inactive_E_vs_inactive_P', 'active_EP_vs_inactive_rest']
 
 class Load_Create_Task():
     """Loads enhancers and promoters data, creates 2 dictionaries for each and 

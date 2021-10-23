@@ -21,7 +21,6 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 CELL_LINES = ['A549','GM12878', 'H1', 'HEK293', 'HEPG2', 'K562', 'MCF7']
 
-g_gpu = torch.Generator(device)
 
 
 class Data_Prepare():
@@ -267,6 +266,21 @@ class Data_Prepare():
                                 sequence=False,
                                 n_folds=3,
                                 random_state=123):
+        """Splits data into training and test set for model testing. Splits further the training
+        set and discard the test set if used for hyperparameters tuning.
+
+        Parameters
+        --------------
+        cell_line (str): name of the cell line. Possible values are ['A549','GM12878', 'H1', 'HEK293', 'HEPG2', 'K562', 'MCF7']
+        sequence (bool): if the data passed are the genomic sequence.
+        n
+        random_state (int): initial random seed for dataset split.
+            Default: 123
+
+        Returns
+        ---------------
+        Training set, Test set, training labels, test labels
+        """
         
         if cell_line not in CELL_LINES:
             raise ValueError(
@@ -395,7 +409,6 @@ class Dataset_Wrap(Dataset):
             data = [bp if i =='n' else i for i in data] # CHECK!
             # one hot encode
             data = self.onehot_encoder.transform(np.array(data).reshape(-1, 1))
-
             data = data.T
             
         data = torch.tensor(data)

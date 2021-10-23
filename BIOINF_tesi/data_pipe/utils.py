@@ -14,17 +14,29 @@ TYPE_AUGM_GENFEATURES = ['smote', 'double']
 
 
 def MICE(X, random_state=100, verbose=False):
-    # create object
+    """MICEforest is an iterative algorithm used for imputating missing data.
+    Returns a single imputated dataset.
+
+     Parameters
+    ----------------
+    X (pd.DataFrame): data.
+
+    Returns
+    ------------
+    Imputated dataset.
+    """
+
+    # create object.
     kds = mf.KernelDataSet(
         X,
         mean_match_candidates=10,
         save_all_iterations=False,
         random_state=random_state)
-    # run algorithm for 10 iterations and use all the processors
+    # run algorithm for 6 iterations and use all the processors.
     kds.mice(6, n_jobs=-1)
     if verbose:
         print(kds)
-    # Return the completed kernel data
+    # Return the imputated dataset.
     return kds.complete_data()
 
 
@@ -198,8 +210,8 @@ def spearman_corr(X, spearman_corr_threshold=0.75, verbose=False):
     
 
 def remove_correlated_features(X, y, correlated_pairs, type_test='wilcoxon_test', verbose=False):
-    """Removes the less correlated feature with the target from a pair of highly correlated features.
-    Correlation with the target is calculated as the wilcoxon test p-value or the kruskal-wallis test p-value.
+    """Removes the feature with the smallest effect on the target from a pair of highly correlated features.
+    Effect on the target is calculated as the wilcoxon test p-value or the kruskal-wallis test p-value.
     A lower p-value means a lower support to null hypothesis, so a stronger ability of the variable
     to discriminate between the different classes of the target.
 
@@ -221,6 +233,7 @@ def remove_correlated_features(X, y, correlated_pairs, type_test='wilcoxon_test'
 
     for pair in correlated_pairs:
         col1, col2 = pair
+        # if none of the columns have been already eliminated compute their effect on the target.
         if col1 in X and col2 in X:
             x1 = X[col1]
             x2 = X[col2]
@@ -240,6 +253,7 @@ def remove_correlated_features(X, y, correlated_pairs, type_test='wilcoxon_test'
             if verbose:
                 print(f'columns to compare: {col1} vs {col2}, p-values: {pval_1} vs {pval_2}')
 
+            # drop the column of the pair with the smallest effect on the target.
             if pval_1 <= pval_2:
                 X = X.drop([col2], axis=1)
             else:
@@ -254,11 +268,20 @@ def remove_correlated_features(X, y, correlated_pairs, type_test='wilcoxon_test'
 def get_imbalance(y=None, n_pos=None, n_neg=None):
     """
     Returns percentage of class imbalance either by directly giving
-    the labels or the lenght of the labels.
+    the labels or the number of positive and negative samples.
 
     Parameters
     ------------
     y (pd.Series): binary labels.
+        Default: None
+    n_pos (int): number of positive samples.
+        Default: None
+    n_neg (int): number of negative samples.
+        Default: None
+
+    Returns
+    ------------
+    tot.positive / tot.negative rounded to 2 decimals (float).
     """
 
     if isinstance(y, (pd.Series, pd.DataFrame)):
@@ -273,7 +296,7 @@ def get_imbalance(y=None, n_pos=None, n_neg=None):
 
 def get_IR(y):
     """
-    Returns imbalance ratio as tot.negative / tot.positive .
+    Returns imbalance ratio as tot.negative / tot.positive.
 
     Parameters
     ------------
@@ -304,28 +327,39 @@ def reverse_strand(sequence):
     return ''.join(sequence)
 
 
-def double_rebalance(X, y, threshold, imbalance, random_state):
+def double_rebalance(X, y, threshold, imbalance, random_state): 
     """
-    Augment data and labels by adding complementary strands.
+    Rebalances data and labels by resampling of positive observations
+    until the imbalance is equal to the rebalance_threshold. 
 
     Parameters
     --------------
-    X (pd.DataFrame): data about genomic sequences.
-    y (pd.Seres): binary labels.
-    imbalance: current level of imbalance as ratio.
-    threshold: desired level of imbalance as ratio.
+    X (pd.DataFrame): genomic sequence data.
+    y (pd.Series): binary labels.
+    imbalance: current level of imbalance as ratio tot.positive/tot.negative.
+    threshold: desired level of imbalance as ratio tot.positive/tot.negative.
+
+    Returns
+    --------------
+    pd.DataFrame, pd.Series
     """
     
     if isinstance(y, pd.DataFrame):
         y=pd.Series(y.values)
-    
+
+    # retrieve positive samples
     pos_index = y[y==1].index
     X_ = X.iloc[pos_index]
     X_.reset_index(drop=True, inplace=True)
+    # create new labels with the same length as the positive samples.
     y_ = pd.Series([1]*len(pos_index))
 
     np.random.seed(random_state)
-    index = np.random.randint(0, len(X_), int( len(X_)*(threshold-imbalance)/imbalance ))
+    # compute the number of positive observations needed to reach an imbalance = rebalance_threshold.
+    n_obs = compute_rebalancing_obs(rebalance_threshold, y=y)
+    # randomly draw positive samples.
+    index = np.random.randint(0, len(X_), n_obs)
+    # append the augmented positive to the original data.
     X = X.append(X_.iloc[index])
     y = y.append(y_.iloc[index])
 
@@ -337,28 +371,37 @@ def double_rebalance(X, y, threshold, imbalance, random_state):
 
 def reverse_strand_rebalance(X, y, rebalance_threshold, random_state):
     """
-    Augment data and labels by adding complementary strands.
+    Rebalances genomic sequence data and labels by adding complementary strands
+    of positive observations until the imbalance between classes is equal to rebalance_threshold.
 
     Parameters
     --------------
     X (pd.DataFrame): data about genomic sequences.
     y (pd.Seres): binary labels.
-    imbalance: current level of imbalance as ratio.
-    rebalance_threshold: desired level of imbalance as ratio.
+    rebalance_threshold: desired level of imbalance as ratio tot.positive/tot.negative.
+    random_state: initial seed.
+
+    Returns
+    --------------
+    pd.DataFrame, pd.Series
     """
     
     if isinstance(y, pd.DataFrame):
         y=pd.Series(y.values)
     
+    # retrieve positive samples
     pos_index = y[y==1].index
     X_ = X.iloc[pos_index]
-            
+    # reverse genomic sequence
     X_ = X_.apply(lambda x: reverse_strand(x))
     X_.reset_index(drop=True, inplace=True)
+    # create new labels with the same length as the positive samples.
     y_ = pd.Series([1]*len(pos_index))
     
     np.random.seed(random_state)
+    # compute the number of positive observations needed to reach an imbalance = rebalance_threshold.
     n_obs = compute_rebalancing_obs(rebalance_threshold, y=y)
+    # randomly draw positive observations
     index = np.random.randint(0, len(X_), n_obs)
     # append the augmented positive to the original data
     X = X.append(X_.iloc[index])
@@ -371,44 +414,76 @@ def reverse_strand_rebalance(X, y, rebalance_threshold, random_state):
 
 
 
-def reverse_strand_augment(X, y, rebalance=True, rebalance_threshold=None, 
+def reverse_strand_augment(X, y, rebalance_threshold=0.1, 
     random_state=123):
     """
-    Augment data and labels by adding complementary strands.
+    Augments data and labels by adding complementary strands. If rebalance=True, 
+    it keeps an imbalance equal to rebalance_threshold, after having doubled the
+    positive samples. Else, it doubles the whole dataset.
+
+    Example 1:
+    The initial imbalance is 0.06
+    - rebalance_threshold = 0.1
+    n.pos = 6 --> 12
+    n.neg = 100 --> 120
+    The new imbalance is 12/120 = 0.1.
+
+    Example 2:
+    The initial imbalance is 0.15
+    - rebalance_threshold = 0.1
+    n.pos = 15 --> 30
+    n.neg = 100 --> 200
+    The new imbalance is 30/200 = 0.15 > 0.1.
+
 
     Parameters
     --------------
     X (pd.DataFrame): data about genomic sequences.
     y (pd.Seres): binary labels.
-    imbalance: current level of imbalance as ratio.
+    rebalance: whether to rebalance classes or not.
+        Default: True
     rebalance_threshold: desired level of imbalance as ratio.
+        Default: 0.1
+
+    Returns
+    --------------
+    pd.DataFrame, pd.Series
     """
 
     if isinstance(y, pd.DataFrame):
         y=pd.Series(y.values)
 
+
     len_X_pre = len(X)
-    # positive examples
+    # retrieve positive samples
     index_ = y[y==1].index
     X_pos = X.iloc[index_].copy()
+    # reverse the strand
     X_pos = X_pos.apply(lambda x: reverse_strand(x))
     X_pos.reset_index(drop=True, inplace=True)
+    # create new labels with the same length as the positive samples.
     y_pos = pd.Series([1]*len(index_))
     
 
-    # negative examples
+    # retrieve negative samples
     index_ = y[y==0].index
     X_neg = X.iloc[index_].copy()
+    # reverse the strand
     X_neg = X_neg.apply(lambda x: reverse_strand(x))
     X_neg.reset_index(drop=True, inplace=True)
 
-    imbalance=get_imbalance(y)
-    # if the data was imbalanced, we cannot double all the negatives, but we need to
-    #take a subsample of them so that the rebalancing threshold is satisfied.
-    if rebalance and imbalance>rebalance_threshold: 
-        n_obs = compute_rebalancing_obs(0.1, y=y)
+    # calculate new imbalance after doubling the positive.
+    y_ = y.append(y_pos)
+    imbalance=get_imbalance(y_)
+    # if the data were originally imbalanced, we cannot double all the negatives, but we need to
+    #take a subsample of them so that the imbalance is equal to rebalance_threshold.
+    if imbalance>rebalance_threshold: 
+        # compute the number of positive observations needed to reach an imbalance = rebalance_threshold.
+        n_obs = compute_rebalancing_obs(0.1, y=y_)
+        # randomly draw positive observations
         np.random.seed(random_state)
         index = np.random.randint(0, len(X_neg), n_obs)
+        # create new labels with the same length as the number of negative samples needed.
         y_neg = pd.Series([0]*n_obs)
 
         # append the augmented negative to the original data
@@ -417,16 +492,15 @@ def reverse_strand_augment(X, y, rebalance=True, rebalance_threshold=None,
         # append the augmented positive to the original data
         X=X.append(X_pos)
         y=y.append(y_pos)
-        # NB: this is the correct order since when SMOTE augment data, first it appends
-        # 0 then 1 to the original data
-
-
+        # NB: this is the correct order since when SMOTE augments data, first it appends
+        # 0 then 1 to the original dataset
         assert (get_imbalance(y) == rebalance_threshold)
 
     else:
+        # create new labels with the same length as the negative samples.
         y_neg = pd.Series([0]*len(index_))
         # append the augmented negative to the original data
-        X=X.append(X_neg.iloc[index])
+        X=X.append(X_neg)
         y=y.append(y_neg)
         # append the augmented positive to the original data
         X=X.append(X_pos)
@@ -444,9 +518,10 @@ def data_rebalancing(X, y, sequence=False, type_augm_genfeatures='smote',
                         rebalance_threshold=0.1, random_state=123):
     """
     Performs data rebalancing through augmentation. The positive data points
-    augmented to rebalance the dataset are appended to the original data
+    augmented to rebalance the dataset are appended to the original dataset.
     
-    Attributes:
+    Parameters
+    --------------
     X (pd.DataFrame): data.
     y (pd.Seres): labels.
     sequence (bool): if the data is a genomic sequence or not.
@@ -456,10 +531,13 @@ def data_rebalancing(X, y, sequence=False, type_augm_genfeatures='smote',
         'smote' and 'double'.
         Default: 'smote'
     rebalance_threshold: desired level of imbalance as ratio.
-        Default: 0.15
+        Default: 0.1
     random_state (int): initial random seed.
         Default: 123
 
+    Returns
+    --------------
+    pd.DataFrame, pd.Series
     """
     
     TYPE_AUGM_GENFEATURES
@@ -470,6 +548,7 @@ def data_rebalancing(X, y, sequence=False, type_augm_genfeatures='smote',
 
 
     imbalance = get_imbalance(y)
+    # if the data are imbalanced rebalance them
     if imbalance < rebalance_threshold:
         
         if sequence: 
@@ -477,6 +556,7 @@ def data_rebalancing(X, y, sequence=False, type_augm_genfeatures='smote',
             return X,y
         
         else:
+            # oversampling using SMOTE by increasing the number of positive samples
             if type_augm_genfeatures == 'smote':
                 oversample_SMOTE = SMOTE(k_neighbors=5, sampling_strategy = rebalance_threshold)
                 X, y = oversample_SMOTE.fit_resample(X, y.ravel())
@@ -485,18 +565,20 @@ def data_rebalancing(X, y, sequence=False, type_augm_genfeatures='smote',
             elif type_augm_genfeatures == 'double':
                 X,y = double_rebalance(X, y, rebalance_threshold, imbalance, random_state)
                 return X, y
-    
+
+    # if the data are not imbalanced, return the original data
     else:
         return X, y
     
 
 
-def data_augmentation(X, y, sequence=False, rebalancing=True, 
+def data_augmentation(X, y, sequence=False, 
                         rebalance_threshold=0.1, random_state=123):
     """
-    Performs data augmentation and rebalancing if required. ........ comment
+    Performs data augmentation and rebalancing if required.
     
-    Attributes:
+    Parameters
+    --------------
     X (pd.DataFrame): data.
     y (pd.Seres): labels.
     sequence (bool): if the data is a genomic sequence or not.
@@ -510,52 +592,68 @@ def data_augmentation(X, y, sequence=False, rebalancing=True,
     random_state (int): initial random seed.
         Default: 123
 
+    Returns
+    --------------
+    pd.DataFrame, pd.Series
     """
 
     len_X_pre = len(X)
     imbalance = get_imbalance(y)
 
-    if rebalancing and imbalance < rebalance_threshold:
-            
-            if sequence: 
-                X,y = reverse_strand_augment(X, y, rebalance=True, rebalance_threshold=rebalance_threshold, 
+    # if data are imbalanced, augment and rebalance them, else just double the dataset.
+    if sequence: 
+                X,y = reverse_strand_augment(X, y, rebalance_threshold=rebalance_threshold, 
                     random_state=random_state)
                 return X,y
-            
-            else:
-                n_pos=y[y==1].count()*2
-                n_neg=y[y==0].count()
 
-                sampling_strategy = {0: n_neg+compute_rebalancing_obs(0.1, n_pos=n_pos, n_neg=n_neg),
+    # if data are imbalanced, augment and rebalance them
+    if imbalance < rebalance_threshold:
+        n_pos=y[y==1].count()*2
+        n_neg=y[y==0].count()
+
+        sampling_strategy = {0: n_neg+compute_rebalancing_obs(0.1, n_pos=n_pos, n_neg=n_neg),
                                     1: n_pos}
-                oversample_SMOTE = SMOTE(k_neighbors=5, sampling_strategy = sampling_strategy)
-                X, y = oversample_SMOTE.fit_resample(X, y.ravel())
+        oversample_SMOTE = SMOTE(k_neighbors=5, sampling_strategy = sampling_strategy)
+        X, y = oversample_SMOTE.fit_resample(X, y.ravel())
 
-                assert( get_imbalance(y) == rebalance_threshold)
-                return X.reset_index(drop=True), pd.Series(y)
+        assert( get_imbalance(y) == rebalance_threshold)
+        return X.reset_index(drop=True), pd.Series(y)
         
 
+    # if data are not imbalanced, just augment them by doubling the dataset
     else:
-        if sequence: 
-                X,y = reverse_strand_augment(X, y, rebalance=False, random_state=random_state)
-                return X,y
-        else:
-                n_pos=y[y==1].count()*2
-                n_neg=y[y==0].count()*2
+        n_pos=y[y==1].count()*2
+        n_neg=y[y==0].count()*2
 
-                sampling_strategy = {0: n_neg, 1: n_pos}
-                oversample_SMOTE = SMOTE(k_neighbors=5, sampling_strategy = sampling_strategy)
-                X, y = oversample_SMOTE.fit_resample(X, y.ravel())
+        sampling_strategy = {0: n_neg, 1: n_pos}
+        oversample_SMOTE = SMOTE(k_neighbors=5, sampling_strategy = sampling_strategy)
+        X, y = oversample_SMOTE.fit_resample(X, y.ravel())
 
-                assert( len_X_pre*2 == len(X))
-                return X.reset_index(drop=True), pd.Series(y)
+        assert( len_X_pre*2 == len(X))
+        return X.reset_index(drop=True), pd.Series(y)
 
         return X, y
     
 
 
 def compute_rebalancing_obs(rebalance_threshold=0.1, y=None, n_pos=None, n_neg=None):
+    """Computes the number of positive or negative observations needed to obtain an
+    imbalance equal to rebalance_threshold, either from the labels or from the number
+    of positive and negative samples.
+
+    Parameters
+    --------------
+    y (pd.Series): binary labels.
+        Default: None
+    n_pos (int): number of positive samples.
+        Default: None
+    n_neg (int): number of negative samples.
+        Default: None
     
+    Returns
+    --------------
+    int.
+    """
     if isinstance(y, np.ndarray):
         y=pd.Series(y)
 
@@ -568,8 +666,8 @@ def compute_rebalancing_obs(rebalance_threshold=0.1, y=None, n_pos=None, n_neg=N
 
     if imbalance > rebalance_threshold:
         return int((n_pos/rebalance_threshold) - n_neg)
-    #elif imbalance < rebalance_threshold: #?
-        #return int((n_neg*rebalance_threshold) - n_pos)
+    elif imbalance < rebalance_threshold: 
+        return int((n_neg*rebalance_threshold) - n_pos)
     else:
         return 0
 
