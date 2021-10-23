@@ -23,7 +23,7 @@ from optuna.samplers import TPESampler, RandomSampler
 
 from .utils import (EarlyStopping, F1_precision_recall, AUPRC, size_out_convolution, 
     weight_reset, get_loss_weights_from_dataloader, get_loss_weights_from_labels, 
-    get_input_size, plot_other_scores, plot_F1_scores, save_best_model)
+    get_input_size)
 from BIOINF_tesi.data_pipe.utils import data_rebalancing, get_imbalance
 from BIOINF_tesi.data_pipe.dataprepare import Data_Prepare, Dataset_Wrap, BalancePos_BatchSampler
 
@@ -663,14 +663,13 @@ class Kfold_CV():
             # prepare DataLoader for training and testing of hyperparameter tuning phase.            
             train_loader = self.build_dataloader_forCV(X_train, y_train, sequence=sequence, 
                                                batch_size=batch_size, training=True,
-                                               rebalancing=rebalancing, type_augm_genfeatures=type_augm_genfeatures)
+                                               type_augm_genfeatures=type_augm_genfeatures)
             test_loader = self.build_dataloader_forCV(X_val, y_val, sequence=sequence, 
-                                               batch_size=batch_size, training=False,
-                                               rebalancing=False)
+                                               batch_size=batch_size, training=False)
             
             # perform hyperparameter tuning.
             self.hyper_tuning(train_loader, test_loader, num_epochs,
-                              study_name, hp_model_path, device, sampler)
+                              study_name, device, sampler)
             
             
             print('\n===============> MODEL TESTING')
@@ -678,14 +677,13 @@ class Kfold_CV():
             # prepare DataLoader for training and testing of final model.            
             train_loader = self.build_dataloader_forCV([X_train, X_val], [y_train, y_val], sequence=sequence, 
                                                batch_size=batch_size, training=True,
-                                               rebalancing=rebalancing, type_augm_genfeatures=type_augm_genfeatures)
+                                               type_augm_genfeatures=type_augm_genfeatures)
             test_loader = self.build_dataloader_forCV(X_test, y_test, sequence=sequence, 
-                                               batch_size=batch_size, training=False,
-                                               rebalancing=False)
+                                               batch_size=batch_size, training=False)
 
             # perform testing of the final model            
             self.model_testing(train_loader, test_loader, num_epochs,
-                               test_model_path, device, checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{self.type_augm_genfeatures if self.rebalancing and not self.sequence else None}')
+                               test_model_path, device, checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{self.type_augm_genfeatures if get_imbalance(y) < self.rebalance_threshold and not self.sequence else None}')
                 
         # compute average AUPRC of the CV
         avg_CV_AUPRC = np.round(sum(self.avg_score)/n_folds, 5)

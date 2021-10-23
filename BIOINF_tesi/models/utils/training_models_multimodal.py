@@ -24,7 +24,7 @@ from optuna.samplers import TPESampler, RandomSampler
 
 from .utils import (EarlyStopping, F1_precision_recall, AUPRC, size_out_convolution, 
     weight_reset, get_loss_weights_from_dataloader, get_loss_weights_from_labels, 
-    get_input_size, plot_other_scores, plot_F1_scores, save_best_model, 
+    get_input_size, 
     selection_probabilities)
 from BIOINF_tesi.data_pipe.dataprepare import Data_Prepare, Dataset_Wrap, BalancePos_BatchSampler
 from BIOINF_tesi.data_pipe.utils import data_augmentation, get_imbalance, data_rebalancing

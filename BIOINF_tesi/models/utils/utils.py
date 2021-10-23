@@ -52,7 +52,6 @@ class EarlyStopping():
         self.trace_func = trace_func
     def __call__(self, score):
 
-
         if self.best_score is None:
             self.best_score = score
         # if the new score is worse than the previous score, add 1 to the counter
@@ -70,14 +69,16 @@ class EarlyStopping():
 
 
 def accuracy(output, target):
-  pred = torch.argmax(output, dim=1)
-  # return the category with the highest probability
-  return (pred == target).float().mean()
-  # return true if the predicted category is equal to the true one, false otherwise.
-  #we transform them in float, 1 if True, 0 is False, then we return the mean of the vector
+    """Computes accuracy for output of a neural network."""
+    pred = torch.argmax(output, dim=1)
+    # return the category with the highest probability
+    return (pred == target).float().mean()
+    # return true if the predicted category is equal to the true one, false otherwise.
+    #we transform them in float, 1 if True, 0 is False, then we return the mean of the vector
 
 
 def AUPRC(output, target):
+    """Computes AUPRC for output of a neural network."""
     pred = torch.argmax(output, dim=1).cpu().detach().numpy()
     target = target.cpu().detach().numpy()
     res = average_precision_score(target, pred) 
@@ -86,6 +87,7 @@ def AUPRC(output, target):
 
 
 def F1_precision_recall(output, target):
+    """Computes F1, precision and recall for output of a neural network."""
     pred = torch.argmax(output, dim=1).cpu().detach().numpy()
     target = target.cpu().detach().numpy()
     
@@ -97,7 +99,12 @@ def get_loss_weights_from_dataloader(dataloader):
     """
     Returns normalized weights of positive and negative class according
     to Inverse Number of Samples (INS) from a DataLoader object.
+
+    Parameters:
+    ------------------
+        dataloader: Pytorch DataLoader.
     """
+
     pos=0
     tot=0
     for i,j in dataloader:
@@ -115,6 +122,10 @@ def get_loss_weights_from_labels(label):
     """
     Returns normalized weights of positive and negative class according
     to Inverse Number of Samples (INS) from Series of labels.
+
+    Parameters:
+    ------------------
+        labels (pd.series): binary labels.
     """
 
     if isinstance(label, pd.DataFrame):
@@ -130,22 +141,48 @@ def get_loss_weights_from_labels(label):
 
 
 def size_out_convolution(input_size, kernel, padding, stride):
-    """Calculates and returns the size of input after a convolution"""
+    """Calculates and returns the size of input after a 1D convolution.
+
+    Parameters:
+    ------------------
+        input_size (int): input size of the convolution.
+        kernel (int): kernel of the convolution.
+        padding (int): padding of hte convolution.
+        stride (int): stride of the convolution.
+    """
     return int(( (input_size + 2*padding - kernel)/stride )+1)
 
 def weight_reset(x):
+    """Resets the weights of neural networks.
+
+    Parameters:
+    ------------------
+        x (torch.nn): layers of the network.
+    """
     if isinstance(x, nn.Conv1d) or isinstance(x, nn.Linear) or isinstance(x, nn.LSTM):
         x.reset_parameters()
 
 def get_input_size(data_loader):
-  for d,l in data_loader:
-    input_size = d.shape[1]
-    break
-  return input_size
+    """Returns the size of the input from a DataLoader object
+
+    Parameters:
+    ------------------
+        dataloader: Pytorch DataLoader.
+    """
+    for d,l in data_loader:
+        input_size = d.shape[1]
+        break
+    return input_size
 
 
 def output_size_from_model_params(model_params):
+    """Returns the size of the fully connected layer after convolutions
+    from the model parameters
     
+    Parameters:
+    ------------------
+        model_params (dict): dictionary containing the parameters of the model.
+    """
     n_layers = model_params['n_layers']
     input_size=256
 
@@ -167,7 +204,20 @@ def output_size_from_model_params(model_params):
 
 
 def selection_probabilities(results_dict, cell_line, task, batch_size):
-    
+    """Returns the values of the selection_probabilities for the EmbraceNet
+    based on the average AUPRC of the single networks
+
+    Parameters:
+    ------------------
+        results_dict (dict): dictionary containing scores of the models.
+        cell_line (str): name of the cell line.
+        task (str): name of the task.
+        batch_size (int): size of the batch.
+
+    Returns:
+    ------------------
+        tensor with shape [n.modalities, batch size] containing probabilities for modalities.
+    """
     AUPRC_FFNN = results_dict[cell_line][task]['FFNN']['average_CV_AUPRC']
     AUPRC_CNN = results_dict[cell_line][task]['CNN']['average_CV_AUPRC']
     prob = torch.tensor([AUPRC_FFNN,AUPRC_CNN])
@@ -178,7 +228,14 @@ def selection_probabilities(results_dict, cell_line, task, batch_size):
 
 
 def drop_last_layers(model_state_dict, network_type):
-    
+    """Drop last layers for loading pre-trained feed-forward and CNN in a 
+    multimodal network
+
+    Parameters:
+    ------------------
+        model_state_dict (dict): Pytorch state_dict.
+        network_type (str): name of the network.
+    """
     if network_type=='FFNN':
         keys = list(model_state_dict.keys())[-2:]
         for k in keys:
@@ -195,6 +252,22 @@ def drop_last_layers(model_state_dict, network_type):
 
 
 def select_augmented_models(results_dict, verbose=False, model_name='FFNN', augm_1='double', augm_2='smote'):
+    """Selects the best augmented models by comparing their scores through the wilcoxon test. If the difference
+    is not significant, keeps by default augm_1.
+    Saves the best performing model in the results_dict object and copies and saves the best model.
+
+    Parameters:
+    ------------------
+        results_dict (dict): dictionary containing scores of the models. 
+        verbose (bool): whether to print or not info about the statistical test.
+            Default: False
+        model_name (str): name of the model.
+            Default: 'FFNN'
+        augm_1 (str): type of augmentation n.1
+            Default: 'double'
+        augm_2 (str): type of augmentation n.2
+            Default: 'smote'
+    """
 
     for cell in results_dict.keys():
         for task in results_dict[cell].keys():
@@ -225,15 +298,19 @@ def select_augmented_models(results_dict, verbose=False, model_name='FFNN', augm
 
 
 
-import seaborn as sns
-import itertools
-
-
-import seaborn as sns
-import itertools
-
-
 def plot_scores(cells, models=['FFNN','CNN'], k=3, palette=1):
+    """Plot training and testing scores of the models by cell line and task.
+    
+    Parameters:
+    ------------------
+        cells (str, list): cell line.
+        models (str, list): name of the model to plot.
+            Default: ['FFNN','CNN']
+        k (int): number of k-folds.
+            Default: 3
+        palette (int): palette of color.
+            Default: 1
+    """
 
     TASKS=[]
     AUPRC=np.empty([0])
@@ -248,6 +325,7 @@ def plot_scores(cells, models=['FFNN','CNN'], k=3, palette=1):
         results_dict = pickle.load(fin)
         results_dict = defaultdict(lambda: defaultdict(dict), results_dict)
 
+    # create suitable dataframe for plotting data from dict. 
     for cell in cells:
         for task in results_dict[cell].keys():    
             for model in results_dict[cell][task].keys():
@@ -260,7 +338,6 @@ def plot_scores(cells, models=['FFNN','CNN'], k=3, palette=1):
                     TASKS.append([task]*k*2)
                     CELLS.append([cell]*k*2)
                     
-                       # sns.barplot(y=y)
     MODEL=list(itertools.chain(*MODEL))
     TEST_TRAIN=list(itertools.chain(*TEST_TRAIN))
     TASKS=list(itertools.chain(*TASKS))

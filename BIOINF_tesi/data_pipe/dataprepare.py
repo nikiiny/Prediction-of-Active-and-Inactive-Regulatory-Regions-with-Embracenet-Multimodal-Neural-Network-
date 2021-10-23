@@ -33,13 +33,13 @@ class Data_Prepare():
     ---------------
     data_dict (dict): dictionary of cell lines (pd.DataFrame).
     labels_dict (dict): dictionary of cell lines labels (pd.Series).
-    kruskal_pval_threshold: kruskal-wallis p-value threshold for correlation
+    kruskal_pval_threshold (float): kruskal-wallis p-value threshold for correlation
         between X and y.
         Default: 0.05
-    wilcoxon_pval_threshold: wilcoxon signed-rank p-value threshold for
+    wilcoxon_pval_threshold (float): wilcoxon signed-rank p-value threshold for
         correlation between X and y.
         Default: 0.05
-    spearman_corr_threshold: Spearman correlation threshold for correlation
+    spearman_corr_threshold (float): Spearman correlation threshold for correlation
         between different features.
         Default: 0.75
     """
@@ -375,8 +375,8 @@ class Dataset_Wrap(Dataset):
 
     Attributes:
     ---------------
-    pos_index: indexes of positive labels.
-    neg_index: indexes of negative labels.
+    pos_index (list): indexes of positive labels.
+    neg_index (list): indexes of negative labels.
     """
     def __init__(self, X, y, sequence=False):
         super(Dataset_Wrap, self).__init__()
@@ -486,16 +486,16 @@ class Build_DataLoader_Pipeline():
     intersection (bool): whether to remove the uncorrelated features selected by all the methods (intersection)
         or the uncorrelated features selected by at least one method (union).
         Default: False
-    pb_corr_threshold: point-biserial correlation threshold for correlation
+    pb_corr_threshold (float): point-biserial correlation threshold for correlation
         between X and y.
         Default: 0.05
-    kruskal_pval_threshold: kruskal-wallis p-value threshold for correlation
+    kruskal_pval_threshold (float): kruskal-wallis p-value threshold for correlation
         between X and y.
         Default: 0.05
-    wilcoxon_pval_threshold: wilcoxon signed-rank p-value threshold for
+    wilcoxon_pval_threshold (float): wilcoxon signed-rank p-value threshold for
         correlation between X and y.
         Default: 0.05
-    spearman_corr_threshold: Spearman correlation threshold for correlation
+    spearman_corr_threshold (float): Spearman correlation threshold for correlation
         between different features.
         Default: 0.85
     verbose (bool): returns info.
