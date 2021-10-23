@@ -327,7 +327,7 @@ def reverse_strand(sequence):
     return ''.join(sequence)
 
 
-def double_rebalance(X, y, threshold, imbalance, random_state): 
+def double_rebalance(X, y, rebalance_threshold, imbalance, random_state): 
     """
     Rebalances data and labels by resampling of positive observations
     until the imbalance is equal to the rebalance_threshold. 
@@ -337,7 +337,7 @@ def double_rebalance(X, y, threshold, imbalance, random_state):
     X (pd.DataFrame): genomic sequence data.
     y (pd.Series): binary labels.
     imbalance: current level of imbalance as ratio tot.positive/tot.negative.
-    threshold: desired level of imbalance as ratio tot.positive/tot.negative.
+    rebalance_threshold: desired level of imbalance as ratio tot.positive/tot.negative.
 
     Returns
     --------------
