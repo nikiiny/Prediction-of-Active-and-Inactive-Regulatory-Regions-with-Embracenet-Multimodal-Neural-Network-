@@ -34,7 +34,7 @@ def fit(model,
         device,
         optimizer=None, 
         num_epochs=100,
-        patience=5,
+        patience=4,
         delta=0,
         verbose=True,
         checkpoint_path=None): 
@@ -51,7 +51,7 @@ def fit(model,
     num_epochs (int): number of epochs.
     patience (int): number of epochs in which the test error is not anymore decreasing
         before stopping the training.
-        Default:5
+        Default:4
     delta (int): minimum decrease in the test error to continue with the training.
         Default:0
     verbose (bool): prints the training error, test error, F1 training score, F1 test score 
@@ -278,7 +278,7 @@ class Param_Search():
         # convert model data type to double and load it into device
         self.model = self.model.double()
         # define early stopping
-        early_stopping = EarlyStopping(patience=5, verbose=True)
+        early_stopping = EarlyStopping(patience=4, verbose=True)
 
 
         for epoch in tqdm(range(1, self.num_epochs + 1), desc='Epochs'):
@@ -543,7 +543,7 @@ class Kfold_CV():
                                     train_loader=train_loader, 
                                     test_loader=test_loader, 
                                     device=device, optimizer=self.optimizer, num_epochs=num_epochs, 
-                                    patience=5, verbose=False, 
+                                    patience=4, verbose=False, 
                                     checkpoint_path=f'{checkpoint_path}.pt')
             
         # store scores of each epoch
@@ -683,7 +683,7 @@ class Kfold_CV():
 
             # perform testing of the final model            
             self.model_testing(train_loader, test_loader, num_epochs,
-                               test_model_path, device, checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{self.type_augm_genfeatures if get_imbalance(y) < self.rebalance_threshold and not self.sequence else None}')
+                               test_model_path, device, checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{self.type_augm_genfeatures if get_imbalance(y) <= self.rebalance_threshold and not self.sequence else None}')
                 
         # compute average AUPRC of the CV
         avg_CV_AUPRC = np.round(sum(self.avg_score)/n_folds, 5)

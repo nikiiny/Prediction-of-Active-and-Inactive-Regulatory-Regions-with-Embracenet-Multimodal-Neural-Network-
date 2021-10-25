@@ -48,7 +48,6 @@ class EmbraceNet(nn.Module):
         num_modalities = len(input_list)
         batch_size = input_list[0].shape[0]
 
-
         # docking layer
         docking_output_list = []
         if (self.bypass_docking):
@@ -71,7 +70,7 @@ class EmbraceNet(nn.Module):
             selection_probabilities = torch.ones(batch_size, len(input_list), dtype=torch.float, device=self.device)
 
         selection_probabilities = torch.mul(selection_probabilities, availabilities)
-
+        # normalise selection probabilities
         probability_sum = torch.sum(selection_probabilities, dim=-1, keepdim=True)
         selection_probabilities = torch.div(selection_probabilities, probability_sum)
 
@@ -121,7 +120,7 @@ class EmbraceNetMultimodal(nn.Module):
 
         
         # 2) embracenet
-        embracement_size = self.trial.suggest_categorical("EMBRACENET_embracement_size", [512, 768, 1024]) #????
+        embracement_size = self.trial.suggest_categorical("EMBRACENET_embracement_size", [512, 768, 1024])
         
         self.embracenet = EmbraceNet(device=self.device, 
                                      input_size_list=[self.FFNN_pre_output_size, self.CNN_pre_output_size], 

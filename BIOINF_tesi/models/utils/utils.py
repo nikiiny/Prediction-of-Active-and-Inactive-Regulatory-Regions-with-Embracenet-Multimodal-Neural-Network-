@@ -27,7 +27,7 @@ class EarlyStopping():
     Parameters:
     ------------------
         patience (int): How long to wait after last time validation score improved.
-            Default: 7
+            Default: 4
         verbose (bool): If True, prints a message for each validation score improvement. 
             Default: False
         delta (float): Minimum change in the monitored quantity to qualify as an improvement.
@@ -41,7 +41,7 @@ class EarlyStopping():
             be stopped, False else.
         """
     
-    def __init__(self, patience=5, verbose=False, delta=0, trace_func=print):
+    def __init__(self, patience=4, verbose=False, delta=0, trace_func=print):
        
         self.patience = patience
         self.verbose = verbose
@@ -251,7 +251,7 @@ def drop_last_layers(model_state_dict, network_type):
 
 
 
-def select_augmented_models(results_dict, verbose=False, model_name='FFNN', augm_1='double', augm_2='smote'):
+def select_augmented_models(results_dict, verbose=False, model_name='FFNN', augm_1='smote', augm_2='double'):
     """Selects the best augmented models by comparing their scores through the wilcoxon test. If the difference
     is not significant, keeps by default augm_1.
     Saves the best performing model in the results_dict object and copies and saves the best model.
@@ -317,6 +317,8 @@ def plot_scores(cells, models=['FFNN','CNN'], k=3, palette=1):
     MODEL=[]
     TEST_TRAIN=[]
     CELLS=[]
+
+    baseline=[]
     
     if isinstance(cells, str):
         cells=[cells]
@@ -328,6 +330,8 @@ def plot_scores(cells, models=['FFNN','CNN'], k=3, palette=1):
     # create suitable dataframe for plotting data from dict. 
     for cell in cells:
         for task in results_dict[cell].keys():    
+            # store baseline AUPRC
+            baseline.append(results_dict[cell][task]['baseline_AUPRC'])
             for model in results_dict[cell][task].keys():
                 if model in models:
                     
@@ -352,8 +356,14 @@ def plot_scores(cells, models=['FFNN','CNN'], k=3, palette=1):
             ]
 
     sns.set_theme(style="whitegrid", font_scale=1.3)
-    plot = sns.catplot(y='tasks', x='AUPRC',hue='test_train',row='model', data=p, kind="bar", orient='h',
-           height=5, aspect=2, palette=PALETTE[palette] , legend_out=False, col='cell')  
+    plot = sns.catplot(y='model', x='AUPRC',hue='test_train',row='tasks', data=p, kind="bar", orient='h',
+           height=4, aspect=2.5, palette=PALETTE[palette] , legend_out=False, col='cell')  
     plot.set_ylabels('', fontsize=15)
     plot.set(xlim=(0,1))
-    plot.set_titles('{row_name}' ' | ' '{col_name}')
+    plot.set_titles('{col_name}' ' | ' '{row_name}')
+    
+
+    axes = plot.axes.flatten()
+    for i,ax in enumerate(axes):
+        ax.axvline(baseline[i], color='red',linewidth=3, ls='--')
+

@@ -45,7 +45,7 @@ def fit_multimodal(model,
         task,
         optimizer=None, 
         num_epochs=100,
-        patience=5,
+        patience=4,
         delta=0,
         verbose=True,
         checkpoint_path=None): 
@@ -66,7 +66,7 @@ def fit_multimodal(model,
     num_epochs (int): number of epochs.
     patience (int): number of epochs in which the test error is not anymore decreasing
         before stopping the training.
-        Default:5
+        Default:4
     delta (int): minimum decrease in the test error to continue with the training.
         Default:0
     verbose (bool): prints the training error, test error, F1 training score, F1 test score 
@@ -327,7 +327,7 @@ class Param_Search_Multimodal():
         # convert model data type to double and load it into device
         self.model = self.model.double().to(self.device)
         # define early stopping
-        early_stopping = EarlyStopping(patience=5, verbose=True)
+        early_stopping = EarlyStopping(patience=4, verbose=True)
 
 
         for epoch in tqdm(range(1, self.num_epochs + 1), desc='Epochs'):
@@ -615,7 +615,7 @@ class Kfold_CV_Multimodal():
                                     test_loader=test_loader, 
                                     device=device, cell_line=cell_line, task=task,
                                     optimizer=self.optimizer, num_epochs=num_epochs, 
-                                    patience=5, verbose=False, 
+                                    patience=4, verbose=False, 
                                     checkpoint_path=f'{checkpoint_path}.pt')
         
         # store scores of each epoch
