@@ -542,7 +542,7 @@ class Kfold_CV_Multimodal():
         else:
             # create dataloader for test set
             return DataLoader(dataset = wrap, batch_size= batch_size*2, shuffle=True,
-                            generator=torch.Generator(self.device).manual_seed(self.random_state+30)) #########   
+                            generator=torch.Generator().manual_seed(self.random_state+30)) #########   
         
         
     def hyper_tuning(self, train_loader, test_loader, num_epochs, cell_line, task,

@@ -361,9 +361,22 @@ def plot_scores(cells, models=['FFNN','CNN'], k=3, palette=1):
     plot.set_ylabels('', fontsize=15)
     plot.set(xlim=(0,1))
     plot.set_titles('{col_name}' ' | ' '{row_name}')
-    
 
     axes = plot.axes.flatten()
     for i,ax in enumerate(axes):
         ax.axvline(baseline[i], color='red',linewidth=3, ls='--')
 
+
+
+def print_content_results_dict():
+    with open ('results_dict.pickle', 'rb') as fin:
+        results_dict = pickle.load(fin)
+        results_dict = defaultdict(lambda: defaultdict(dict), results_dict)
+    
+    for i in results_dict.keys():
+        print(i)
+        for k in results_dict[i].keys():
+            print(f'\n{k}')
+            for j in results_dict[i][k].keys():
+                print(j)
+        print('\n')
