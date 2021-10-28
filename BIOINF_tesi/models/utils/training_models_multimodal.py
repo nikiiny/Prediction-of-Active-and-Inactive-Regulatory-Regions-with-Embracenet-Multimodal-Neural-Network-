@@ -467,7 +467,7 @@ def dd():
     return defaultdict(list)
 
 def path_augmentation(x):
-    return '_augmentation' if x==True else ''
+    return 'augmentation' if x==True else ''
 
 
 
@@ -724,7 +724,7 @@ class Kfold_CV_Multimodal():
         for i, (train_index, test_index) in enumerate(kf.split(X_1)):
             self.i = i+1
             
-            study_name = f'{study_name}_{str(self.i)}{path_augmentation(self.augmentation)}'
+            STUDY_NAME = f'{study_name}_{str(self.i)}{path_augmentation(self.augmentation)}'
 
             print(f'>>> ITERATION N. {self.i}')
             
@@ -763,7 +763,7 @@ class Kfold_CV_Multimodal():
 
             # perform hyperparameter tuning.
             self.hyper_tuning(train_loader, test_loader, num_epochs, cell_line, task,
-                              study_name, device, sampler)
+                              STUDY_NAME, device, sampler)
             
             
             print('\n===============> MODEL TESTING')
@@ -788,7 +788,7 @@ class Kfold_CV_Multimodal():
             # perform testing of the final model            
             self.model_testing(train_loader, test_loader, num_epochs,
                                test_model_path, device, cell_line, task,
-                               checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}{path_augmentation(self.augmentation)}') 
+                               checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{path_augmentation(self.augmentation)}') 
 
         # compute average AUPRC of the CV
         avg_CV_AUPRC = np.round(sum(self.avg_score)/n_folds, 5)

@@ -670,5 +670,3 @@ def compute_rebalancing_obs(rebalance_threshold=0.1, y=None, n_pos=None, n_neg=N
         return int((n_neg*rebalance_threshold) - n_pos)
     else:
         return 0
-
-
