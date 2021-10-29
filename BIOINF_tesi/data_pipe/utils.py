@@ -265,7 +265,7 @@ def remove_correlated_features(X, y, correlated_pairs, type_test='wilcoxon_test'
 
 
 
-def get_imbalance(y=None, n_pos=None, n_neg=None):
+def get_imbalance(y=None, n_pos=None, n_neg=None, n_decim=2):
     """
     Returns percentage of class imbalance either by directly giving
     the labels or the number of positive and negative samples.
@@ -291,7 +291,7 @@ def get_imbalance(y=None, n_pos=None, n_neg=None):
         n_pos = len(y[y==1])
         n_neg = len(y[y==0])
 
-    return np.round(float(n_pos/n_neg),2)
+    return np.round(float(n_pos/n_neg),n_decim)
 
 
 def get_IR(y):
@@ -453,6 +453,7 @@ def reverse_strand_augment(X, y, rebalance_threshold=0.1,
     if isinstance(y, pd.DataFrame):
         y=pd.Series(y.values)
 
+    imbalance_pre = get_imbalance(y)
 
     len_X_pre = len(X)
     # retrieve positive samples
@@ -474,10 +475,10 @@ def reverse_strand_augment(X, y, rebalance_threshold=0.1,
 
     # calculate new imbalance after doubling the positive.
     y_ = y.append(y_pos)
-    imbalance=get_imbalance(y_)
+    imbalance_post=get_imbalance(y_)
     # if the data were originally imbalanced, we cannot double all the negatives, but we need to
     #take a subsample of them so that the imbalance is equal to rebalance_threshold.
-    if imbalance>rebalance_threshold: 
+    if imbalance_pre < rebalance_threshold and imbalance_post > rebalance_threshold: 
         # compute the number of positive observations needed to reach an imbalance = rebalance_threshold.
         n_obs = compute_rebalancing_obs(0.1, y=y_)
         # randomly draw positive observations
@@ -602,9 +603,9 @@ def data_augmentation(X, y, sequence=False,
 
     # if data are imbalanced, augment and rebalance them, else just double the dataset.
     if sequence: 
-                X,y = reverse_strand_augment(X, y, rebalance_threshold=rebalance_threshold, 
+        X,y = reverse_strand_augment(X, y, rebalance_threshold=rebalance_threshold, 
                     random_state=random_state)
-                return X,y
+        return X,y
 
     # if data are imbalanced, augment and rebalance them
     if imbalance < rebalance_threshold:
