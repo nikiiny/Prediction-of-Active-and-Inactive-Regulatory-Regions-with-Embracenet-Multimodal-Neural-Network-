@@ -8,6 +8,8 @@
 *.ipynb_checkpoints
 *.pyc
 *.pyo
+!results_dict.pickle
+!BIOINF_optuna_tuning.db
 
 # CUDA .gitignore
 *.i
