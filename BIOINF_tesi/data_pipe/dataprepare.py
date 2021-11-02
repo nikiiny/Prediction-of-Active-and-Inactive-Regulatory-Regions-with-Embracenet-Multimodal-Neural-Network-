@@ -14,7 +14,7 @@ from sklearn.model_selection import train_test_split, KFold
 from collections import OrderedDict, defaultdict
 
 from .utils import (MICE, kruskal_wallis_test, wilcoxon_test, spearman_corr, remove_correlated_features,
-    data_augmentation)
+    data_augmentation, process_sequence)
 
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -367,8 +367,6 @@ class Data_Prepare():
 
                 
 
-
-
 class Dataset_Wrap(Dataset):
     """Builds a Dataset object and saves indexes of positive and negative labels.
     If the data are the genomic sequence, transforms labels in integer and applies MICE imputer.
@@ -403,13 +401,7 @@ class Dataset_Wrap(Dataset):
         
         if self.sequence:
             # all the letters in lowercase
-            data = list(data.lower()) 
-            # value n corresponds to nan, so we substitute it with a random bp
-            bp = random.choice(['a','c','g','t'])
-            data = [bp if i =='n' else i for i in data] # CHECK!
-            # one hot encode
-            data = self.onehot_encoder.transform(np.array(data).reshape(-1, 1))
-            data = data.T
+            data = process_sequence(data)
             
         data = torch.tensor(data)
 

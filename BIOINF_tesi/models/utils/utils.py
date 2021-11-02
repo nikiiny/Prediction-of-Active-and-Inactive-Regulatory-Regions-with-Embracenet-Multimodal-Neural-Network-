@@ -295,3 +295,23 @@ def select_augmented_models(results_dict, verbose=False, model_name='FFNN', augm
                         print(f'Best augmentation method: {augm_1}')
 
     return results_dict
+
+
+
+
+def get_single_model_params(model_params, models=['CNN','FFNN']):
+    """
+    model_params: model_params dictionary containing the values of the hyperparameters
+        of the models.
+    """
+    ddict = defaultdict(lambda: defaultdict(dict))
+
+    if isinstance(models,str):
+        models = [models]
+    for model in models:
+        keys = [k for k in model_params.keys() if k.startswith(model)]
+        for key in keys:
+            start=re.search('_', key).span()[1]
+            ddict[model][key[start:]]=model_params[key]
+
+    return ddict

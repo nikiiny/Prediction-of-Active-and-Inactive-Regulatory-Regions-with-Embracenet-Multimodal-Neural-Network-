@@ -9,10 +9,9 @@ from .utils import size_out_convolution
 
 class CNN_pre(nn.Module): 
 
-    def __init__(self, trial, device, classes=2):
+    def __init__(self, trial, device):
         super(CNN_pre, self).__init__()
         self.trial = trial
-        self.classes = classes
         self.device = device
         self.CNN_model = []
         

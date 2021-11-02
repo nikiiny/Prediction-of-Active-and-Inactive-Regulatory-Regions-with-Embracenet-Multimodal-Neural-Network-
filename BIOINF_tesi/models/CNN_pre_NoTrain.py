@@ -7,10 +7,10 @@ from .utils import size_out_convolution
 
 import re
 
-class CNN_pre(nn.Module): 
+class CNN_pre_NoTrain(nn.Module): 
 
-    def __init__(self, torch_saved_state, device):
-        super(CNN_pre, self).__init__()
+    def __init__(self, model_params, device):
+        super(CNN_pre_NoTrain, self).__init__()
         self.device = device
         self.CNN_model = []
         
@@ -20,7 +20,6 @@ class CNN_pre(nn.Module):
         input_size=256
         in_channels = 4
         
-        model_params = torch_saved_state['model_params']
         n_layers = model_params['n_layers']
 
         layers = []
@@ -42,10 +41,14 @@ class CNN_pre(nn.Module):
             layers.append(nn.Dropout(model_params[f'dropout_l{i}']))
 
             in_channels = out_channels
+
+            output_size = size_out_convolution(input_size, kernel_size, padding, stride)
+            # for maxpool 
+            output_size = size_out_convolution(output_size, maxpool_kernel_size, 0, maxpool_stride)
+            input_size=output_size
             
 
         self.CNN_model = nn.Sequential(*layers)
-
     
     def forward(self, x):
 

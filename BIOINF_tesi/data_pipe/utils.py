@@ -7,6 +7,8 @@ from sklearn.metrics import average_precision_score
 from scipy.stats import spearmanr, kruskal, ranksums
 import miceforest as mf
 from imblearn.over_sampling import SMOTE
+import random
+from sklearn.preprocessing import OneHotEncoder
 
 
 TYPE_TEST = ['wilcoxon_test','kruskal_wallis_test']
@@ -263,9 +265,19 @@ def remove_correlated_features(X, y, correlated_pairs, type_test='wilcoxon_test'
     return X
 
 
+def process_sequence(data):
+    onehot_encoder = OneHotEncoder(sparse=False).fit(np.array(['t', 'g', 'c', 'a']).reshape(-1, 1)) 
+    data = list(data.lower()) 
+    # value n corresponds to nan, so we substitute it with a random bp
+    bp = random.choice(['a','c','g','t'])
+    data = [bp if i =='n' else i for i in data] # CHECK!
+    # one hot encode
+    data = onehot_encoder.transform(np.array(data).reshape(-1, 1))
+    return data.T
 
 
-def get_imbalance(y=None, n_pos=None, n_neg=None, n_decim=2):
+
+def get_imbalance(y=None, n_pos=None, n_neg=None, n_decim=3):
     """
     Returns percentage of class imbalance either by directly giving
     the labels or the number of positive and negative samples.
@@ -408,7 +420,7 @@ def reverse_strand_rebalance(X, y, rebalance_threshold, random_state):
     y = y.append(y_.iloc[index])
 
     assert (len(X) == len(y))
-    assert (get_imbalance(y) == rebalance_threshold)
+    assert (get_imbalance(y, n_decim=2) == rebalance_threshold)
     
     return X.reset_index(drop=True), y.reset_index(drop=True)
 
@@ -475,10 +487,10 @@ def reverse_strand_augment(X, y, rebalance_threshold=0.1,
 
     # calculate new imbalance after doubling the positive.
     y_ = y.append(y_pos)
-    imbalance_post=get_imbalance(y_)
+   # imbalance_post=get_imbalance(y_)
     # if the data were originally imbalanced, we cannot double all the negatives, but we need to
     #take a subsample of them so that the imbalance is equal to rebalance_threshold.
-    if imbalance_pre < rebalance_threshold and imbalance_post > rebalance_threshold: 
+    if imbalance_pre < rebalance_threshold: # and imbalance_post > rebalance_threshold: 
         # compute the number of positive observations needed to reach an imbalance = rebalance_threshold.
         n_obs = compute_rebalancing_obs(0.1, y=y_)
         # randomly draw positive observations
@@ -495,7 +507,7 @@ def reverse_strand_augment(X, y, rebalance_threshold=0.1,
         y=y.append(y_pos)
         # NB: this is the correct order since when SMOTE augments data, first it appends
         # 0 then 1 to the original dataset
-        assert (get_imbalance(y) == rebalance_threshold)
+        assert (get_imbalance(y, n_decim=2) == rebalance_threshold)
 
     else:
         # create new labels with the same length as the negative samples.
@@ -509,7 +521,7 @@ def reverse_strand_augment(X, y, rebalance_threshold=0.1,
         assert (len_X_pre*2 == len(X))
 
     assert (len(X) == len(y))
-    
+
     return X.reset_index(drop=True), y.reset_index(drop=True)
 
 
@@ -617,7 +629,7 @@ def data_augmentation(X, y, sequence=False,
         oversample_SMOTE = SMOTE(k_neighbors=5, sampling_strategy = sampling_strategy)
         X, y = oversample_SMOTE.fit_resample(X, y.ravel())
 
-        assert( get_imbalance(y) == rebalance_threshold)
+        assert( get_imbalance(y, n_decim=2) == rebalance_threshold)
         return X.reset_index(drop=True), pd.Series(y)
         
 

@@ -153,7 +153,7 @@ def plot_scores(cells, models=['FFNN','CNN'], k=3, palette=1):
 
 
 
-def print_content_results_dict(models=['FFNN','CNN','EmbraceNetMultimodal','ConcatNetMultimodal']):
+def print_content_results_dict(models=['FFNN','CNN','EmbraceNetMultimodal','ConcatNetMultimodal', 'EmbraceNetMultimodal_augm']):
     with open ('results_dict.pickle', 'rb') as fin:
         results_dict = pickle.load(fin)
         results_dict = defaultdict(lambda: defaultdict(dict), results_dict)

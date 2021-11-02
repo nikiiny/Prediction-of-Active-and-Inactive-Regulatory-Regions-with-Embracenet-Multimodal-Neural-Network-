@@ -4,8 +4,8 @@ import torch.nn.functional as F
 from torch import Tensor
 import numpy as np
 
-from .utils import output_size_from_model_params, drop_last_layers
-from . import CNN_pre, FFNN_pre
+from .utils import output_size_from_model_params, drop_last_layers, get_single_model_params
+from . import FFNN_pre_NoTrain, CNN_pre_NoTrain
 
 
 
@@ -91,41 +91,43 @@ class EmbraceNet(nn.Module):
 
 
 
-class EmbraceNetMultimodal(nn.Module):
+class EmbraceNetMultimodal_NoTrain(nn.Module):
     def __init__(self, 
-                 trial,
                  cell_line,
                  task,
                  device,
                  in_features_FFNN,
+                 augmentation=False,
                  n_classes=2,  
                  args=None,
                  embracenet_dropout=True):
-        super(EmbraceNetMultimodal, self).__init__()
+        super(EmbraceNetMultimodal_NoTrain, self).__init__()
         
         
         # input parameters
-        self.trial=trial
         self.cell_line=cell_line
+        self.task = task
         self.device = device
         self.n_classes = n_classes
         self.embracenet_dropout=embracenet_dropout
+        self.softmax_layer = torch.nn.Softmax(dim=None)
         self.args = args
 
-        torch_saved_state_FFNN = torch.load(f'models/{cell_line}_{task}_FFNN_TEST.pt', map_location=torch.device(device))
-        torch_saved_state_CNN = torch.load(f'models/{cell_line}_{task}_CNN_TEST.pt', map_location=torch.device(device))
+        if augmentation:
+            torch_saved_state = torch.load(f'models/{self.cell_line}_{self.task}_EmbraceNetMultimodal_TEST_augmentation.pt', map_location=torch.device(device))
+        else:
+            torch_saved_state = torch.load(f'models/{self.cell_line}_{self.task}_EmbraceNetMultimodal_TEST.pt', map_location=torch.device(device))
         
+        single_model_params = get_single_model_params(torch_saved_state['model_params'])
         # 1) pre neural networks
-        self.FFNN = FFNN_pre(in_features_FFNN, torch_saved_state_FFNN, device=self.device) #?
-        self.CNN = CNN_pre(torch_saved_state_CNN, device=self.device) #?
+        self.FFNN = FFNN_pre_NoTrain(in_features_FFNN, single_model_params['FFNN'], device=self.device)
+        self.CNN = CNN_pre_NoTrain(single_model_params['CNN'], device=self.device) 
 
         # load previously optimised models to find optimal hyperparameters. 
         # first remove last layers
-        model_state_dict_FFNN = drop_last_layers(torch_saved_state_FFNN['model_state_dict'], 'FFNN')
-        model_state_dict_CNN = drop_last_layers(torch_saved_state_CNN['model_state_dict'], 'CNN')
         # then load into empty networks
-        self.FFNN.load_state_dict(model_state_dict_FFNN)
-        self.CNN.load_state_dict(model_state_dict_CNN)
+        #self.FFNN.load_state_dict(drop_last_layers(single_model_params['FFNN']['model_state_dict'], 'FFNN'))
+        #self.CNN.load_state_dict(drop_last_layers(single_model_params['CNN']['model_state_dict'], 'CNN'))
 
         # freeze layers
         for param in self.FFNN.parameters():
@@ -133,14 +135,14 @@ class EmbraceNetMultimodal(nn.Module):
         for param in self.CNN.parameters():
             param.requires_grad = False
         
-        last_layer_FFNN = torch_saved_state_FFNN['model_params']['n_layers']-1
-        self.FFNN_pre_output_size = torch_saved_state_FFNN['model_params'][f'n_units_l{last_layer_FFNN}']
+        last_layer_FFNN = single_model_params['FFNN']['n_layers']-1
+        self.FFNN_pre_output_size = single_model_params['FFNN'][f'n_units_l{last_layer_FFNN}']
         
-        self.CNN_pre_output_size = output_size_from_model_params(torch_saved_state_CNN['model_params'])
+        self.CNN_pre_output_size = output_size_from_model_params(single_model_params['CNN'])
 
         
         # 2) embracenet
-        embracement_size = self.trial.suggest_categorical("embracement_size", [512, 768, 1024]) #????
+        embracement_size = torch_saved_state['model_params']['EMBRACENET_embracement_size']
         
         self.embracenet = EmbraceNet(device=self.device, 
                                      input_size_list=[self.FFNN_pre_output_size, self.CNN_pre_output_size], 
@@ -150,20 +152,17 @@ class EmbraceNetMultimodal(nn.Module):
         
         
         # 3) post embracement layers
-        n_post_layers = self.trial.suggest_int("n_post_layers", 0, 2) 
+        model_params = torch_saved_state['model_params']
+
+        n_post_layers = model_params['n_post_layers']
         post_layers = []
 
         for i in range(n_post_layers):
-            if i==0:
-                out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [32, 64, 128, 256])
-            elif i==1:
-                out_features = self.trial.suggest_categorical("n_units_l{}".format(i), [16, 32, 64, 128])
-                
-            post_layers.append(nn.Linear(in_features, out_features))
-            post_layers.append(nn.ReLU())
+            out_features = model_params[f'EMBRACENET_n_units_l{i}']
             
-            dropout = self.trial.suggest_categorical("dropout_l{}".format(i), [0.0, 0.3, 0.5, 0.7])
-            post_layers.append(nn.Dropout(dropout))
+            layers.append(nn.Linear(in_features, out_features))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(model_params[f'EMBRACENET_dropout_l{i}']))
                 
             in_features = out_features
             
@@ -172,7 +171,7 @@ class EmbraceNetMultimodal(nn.Module):
 
         self.post = nn.Sequential(*post_layers)
 
-        selection_probabilities = self.trial.suggest_float("selection_probabilities_FFNN", 0.0, 1.0)
+        selection_probabilities = model_params['selection_probabilities_FFNN']
         self.selection_probabilities = torch.tensor([selection_probabilities, 1.0-selection_probabilities])
   
     def forward(self, x, availabilities=None, selection_probabilities=None, is_training=False, embracenet_dropout=True):
@@ -207,7 +206,8 @@ class EmbraceNetMultimodal(nn.Module):
 
         # employ final layers
         output = self.post(embracenet)
+        output = self.softmax_layer(output)
 
         # output softmax
-        return output
+        return output.reshape(-1)
 

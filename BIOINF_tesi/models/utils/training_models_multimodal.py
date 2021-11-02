@@ -468,6 +468,7 @@ def dd():
 
 def path_augmentation(x):
     return 'augmentation' if x==True else ''
+    # return '_augmentation' if x==True else ''
 
 
 
@@ -542,7 +543,7 @@ class Kfold_CV_Multimodal():
         else:
             # create dataloader for test set
             return DataLoader(dataset = wrap, batch_size= batch_size*2, shuffle=True,
-                            generator=torch.Generator().manual_seed(self.random_state+30)) #########   
+                            generator=torch.Generator().manual_seed(self.random_state+30)) 
         
         
     def hyper_tuning(self, train_loader, test_loader, num_epochs, cell_line, task,
@@ -789,6 +790,7 @@ class Kfold_CV_Multimodal():
             self.model_testing(train_loader, test_loader, num_epochs,
                                test_model_path, device, cell_line, task,
                                checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{path_augmentation(self.augmentation)}') 
+            #  checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test{path_augmentation(self.augmentation)}') 
 
         # compute average AUPRC of the CV
         avg_CV_AUPRC = np.round(sum(self.avg_score)/n_folds, 5)

@@ -5,12 +5,25 @@ from torch import Tensor
 import numpy as np
 
 
-class FFNN_pre(nn.Module): 
+class FFNN_NoTrain(nn.Module): 
 
-    def __init__(self, in_features, torch_saved_state, device):
-        super(FFNN_pre, self).__init__()
+    def __init__(self, 
+                cell_line,
+                task,
+                in_features, 
+                torch_saved_state, 
+                device, 
+                classes=2):
+        super(FFNN_NoTrain, self).__init__()
+        self.cell_line = cell_line
+        self.task = task
         self.device = device
+        self.classes = classes
         self.model = []
+        self.softmax_layer = torch.nn.Softmax(dim=None)
+
+        torch_saved_state = torch.load(f'models/{self.cell_line}_{self.task}_FFNN_TEST_augmentation.pt', 
+            map_location=torch.device(device))
 
         model_params = torch_saved_state['model_params']
         n_layers = model_params['n_layers']
@@ -26,13 +39,13 @@ class FFNN_pre(nn.Module):
                 
             in_features = out_features
 
-        #layers.append(nn.Linear(in_features, self.classes))
+        layers.append(nn.Linear(in_features, self.classes))
 
         self.model = nn.Sequential(*layers)
     
     def forward(self, x):
         
         out = self.model(x)
-        out = out.reshape(out.size(0), -1) 
+        out = self.softmax_layer(out)
 
-        return out.to(self.device)
+        return out.reshape(-1).to(self.device)

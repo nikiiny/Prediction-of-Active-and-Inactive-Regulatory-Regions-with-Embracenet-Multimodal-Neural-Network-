@@ -7,4 +7,12 @@ from .FFNN_pre import FFNN_pre
 from .EmbraceNetMultimodal import EmbraceNetMultimodal
 from .ConcatNetMultimodal import ConcatNetMultimodal
 
-__all__ = ['CNN', 'FFNN', 'CNN_LSTM', 'CNN_pre','FFNN_pre','EmbracenetMultimodal', 'ConcatNetMultimodal']
+from .CNN_pre_NoTrain import CNN_pre_NoTrain
+from .FFNN_pre_NoTrain import FFNN_pre_NoTrain
+from .FFNN_NoTrain import FFNN_NoTrain
+from .CNN_NoTrain import CNN_NoTrain
+from .EmbraceNetMultimodal_NoTrain import EmbraceNetMultimodal_NoTrain
+
+__all__ = ['CNN', 'FFNN', 'CNN_LSTM', 'CNN_pre','FFNN_pre','EmbracenetMultimodal', 
+			'ConcatNetMultimodal', 'CNN_pre_NoTrain', 'FFNN_pre_NoTrain', 
+			'EmbraceNetMultimodal_NoTrain']
