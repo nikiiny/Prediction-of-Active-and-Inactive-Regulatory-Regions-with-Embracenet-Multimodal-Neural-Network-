@@ -95,8 +95,8 @@ class EmbraceNetMultimodal_NoTrain(nn.Module):
     def __init__(self, 
                  cell_line,
                  task,
-                 device,
                  in_features_FFNN,
+                 device,
                  augmentation=False,
                  n_classes=2,  
                  args=None,
@@ -114,7 +114,7 @@ class EmbraceNetMultimodal_NoTrain(nn.Module):
         self.args = args
 
         if augmentation:
-            torch_saved_state = torch.load(f'models/{self.cell_line}_{self.task}_EmbraceNetMultimodal_TEST_augmentation.pt', map_location=torch.device(device))
+            torch_saved_state = torch.load(f'models/{self.cell_line}_{self.task}_EmbraceNetMultimodal_augmentation_TEST.pt', map_location=torch.device(device))
         else:
             torch_saved_state = torch.load(f'models/{self.cell_line}_{self.task}_EmbraceNetMultimodal_TEST.pt', map_location=torch.device(device))
         
@@ -160,9 +160,9 @@ class EmbraceNetMultimodal_NoTrain(nn.Module):
         for i in range(n_post_layers):
             out_features = model_params[f'EMBRACENET_n_units_l{i}']
             
-            layers.append(nn.Linear(in_features, out_features))
-            layers.append(nn.ReLU())
-            layers.append(nn.Dropout(model_params[f'EMBRACENET_dropout_l{i}']))
+            post_layers.append(nn.Linear(in_features, out_features))
+            post_layers.append(nn.ReLU())
+            post_layers.append(nn.Dropout(model_params[f'EMBRACENET_dropout_l{i}']))
                 
             in_features = out_features
             

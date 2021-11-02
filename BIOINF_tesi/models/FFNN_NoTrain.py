@@ -11,7 +11,6 @@ class FFNN_NoTrain(nn.Module):
                 cell_line,
                 task,
                 in_features, 
-                torch_saved_state, 
                 device, 
                 classes=2):
         super(FFNN_NoTrain, self).__init__()
@@ -22,7 +21,7 @@ class FFNN_NoTrain(nn.Module):
         self.model = []
         self.softmax_layer = torch.nn.Softmax(dim=None)
 
-        torch_saved_state = torch.load(f'models/{self.cell_line}_{self.task}_FFNN_TEST_augmentation.pt', 
+        torch_saved_state = torch.load(f'models/{self.cell_line}_{self.task}_FFNN_TEST.pt', 
             map_location=torch.device(device))
 
         model_params = torch_saved_state['model_params']

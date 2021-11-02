@@ -4,58 +4,62 @@ import torch.nn.functional as F
 from torch import Tensor
 import numpy as np
 
-from .utils import output_size_from_model_params, drop_last_layers
-from . import CNN_pre, FFNN_pre
+from .utils import output_size_from_model_params, drop_last_layers, get_single_model_params
+from . import FFNN_pre_NoTrain, CNN_pre_NoTrain
 
 
-
-class ConcatNetMultimodal(nn.Module):
+class ConcatNetMultimodal_NoTrain(nn.Module):
     def __init__(self, 
-                 trial,
                  cell_line,
                  task,
-                 device,
                  in_features_FFNN,
+                 device,
                  n_classes=2,  
-                 args=None,
-                 embracenet_dropout=True):
-        super(ConcatNetMultimodal, self).__init__()
+                 args=None):
+        super(ConcatNetMultimodal_NoTrain, self).__init__()
         
         
         # input parameters
-        self.trial=trial
         self.cell_line=cell_line
+        self.task = task
         self.device = device
         self.n_classes = n_classes
         self.softmax_layer = torch.nn.Softmax(dim=None)
         self.args = args
         
-        # 1) pre neural networks
-        self.FFNN = FFNN_pre(self.trial, in_features_FFNN, device=self.device) 
-        self.CNN = CNN_pre(self.trial, device=self.device) 
-        
-        self.FFNN_pre_output_size = self.FFNN.output_size
-        self.CNN_pre_output_size = self.CNN.output_size
+        torch_saved_state = torch.load(f'models/{self.cell_line}_{self.task}_ConcatNetMultimodal_TEST.pt', 
+            map_location=torch.device(device))
 
+        single_model_params = get_single_model_params(torch_saved_state['model_params'])
+        # 1) pre neural networks
+        self.FFNN = FFNN_pre_NoTrain(in_features_FFNN, single_model_params['FFNN'], device=self.device)
+        self.CNN = CNN_pre_NoTrain(single_model_params['CNN'], device=self.device) 
+        
+        for param in self.FFNN.parameters():
+            param.requires_grad = False
+        for param in self.CNN.parameters():
+            param.requires_grad = False
+        
+        last_layer_FFNN = single_model_params['FFNN']['n_layers']-1
+        self.FFNN_pre_output_size = single_model_params['FFNN'][f'n_units_l{last_layer_FFNN}']
+        
+        self.CNN_pre_output_size = output_size_from_model_params(single_model_params['CNN'])
         
         # 2) concatenation layer + post layers
+        model_params = torch_saved_state['model_params']
+
         in_features = self.FFNN_pre_output_size + self.CNN_pre_output_size
 
-        n_post_layers = self.trial.suggest_int("CONCATNET_n_post_layers", 1, 3) 
+        n_post_layers = model_params["CONCATNET_n_post_layers"]
         post_layers = []
 
         for i in range(n_post_layers):
-            if i==0:
-                out_features = self.trial.suggest_categorical("CONCATNET_n_units_l{}".format(i), [512, 768, 1024])
-            elif i==1:
-                out_features = self.trial.suggest_categorical("CONCATNET_n_units_l{}".format(i), [32, 64, 128, 256, 512])
-            elif i==2:
-                out_features = self.trial.suggest_categorical("CONCATNET_n_units_l{}".format(i), [16, 32, 64, 128, 256])
+            out_features = model_params[f"CONCATNET_n_units_l{i}"]
                 
             post_layers.append(nn.Linear(in_features, out_features))
             post_layers.append(nn.ReLU())
             
-            dropout = self.trial.suggest_categorical("CONCATNET_dropout_l{}".format(i), [0.0, 0.2, 0.3, 0.5])
+            dropout = model_params[f"CONCATNET_dropout_l{i}"]
             post_layers.append(nn.Dropout(dropout))
                 
             in_features = out_features
@@ -81,5 +85,5 @@ class ConcatNetMultimodal(nn.Module):
         outuput = self.softmax_layer(output)
 
         # output softmax
-        return output
+        return output.reshape(-1)
 

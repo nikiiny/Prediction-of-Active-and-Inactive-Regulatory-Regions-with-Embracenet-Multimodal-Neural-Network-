@@ -14,8 +14,8 @@ class ConcatNetMultimodal(nn.Module):
                  trial,
                  cell_line,
                  task,
-                 device,
                  in_features_FFNN,
+                 device,
                  n_classes=2,  
                  args=None,
                  embracenet_dropout=True):

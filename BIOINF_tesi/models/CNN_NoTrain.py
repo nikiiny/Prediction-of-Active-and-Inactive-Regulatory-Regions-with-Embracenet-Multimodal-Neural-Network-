@@ -12,7 +12,6 @@ class CNN_NoTrain(nn.Module):
     def __init__(self, 
                 cell_line,
                 task,
-                torch_saved_state, 
                 device, 
                 classes=2):
         super(CNN_NoTrain, self).__init__()
@@ -29,7 +28,7 @@ class CNN_NoTrain(nn.Module):
         input_size=256
         in_channels = 4
         
-        torch_saved_state = torch.load(f'models/{self.cell_line}_{self.task}_FFNN_TEST_augmentation.pt', 
+        torch_saved_state = torch.load(f'models/{self.cell_line}_{self.task}_CNN_TEST.pt', 
             map_location=torch.device(device))
 
         model_params = torch_saved_state['model_params']

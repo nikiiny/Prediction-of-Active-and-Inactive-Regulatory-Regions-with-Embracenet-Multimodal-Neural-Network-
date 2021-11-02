@@ -466,12 +466,6 @@ class Param_Search_Multimodal():
 def dd():
     return defaultdict(list)
 
-def path_augmentation(x):
-    return 'augmentation' if x==True else ''
-    # return '_augmentation' if x==True else ''
-
-
-
 class Kfold_CV_Multimodal():
     """Performs k-folds cross-validation. At each iteration performs
     hyperparameter tuning, then train and test the model with the optimised
@@ -639,7 +633,7 @@ class Kfold_CV_Multimodal():
                 torch.save({
                         'model_state_dict': self.model_.state_dict(),
                         'model_params': self.best_params[self.i]
-                    }, f'models/{test_model_path}{path_augmentation(self.augmentation)}.pt')
+                    }, f'models_/{test_model_path}.pt') ###### CAMBIA
     
     
     def __call__(self,
@@ -725,7 +719,7 @@ class Kfold_CV_Multimodal():
         for i, (train_index, test_index) in enumerate(kf.split(X_1)):
             self.i = i+1
             
-            STUDY_NAME = f'{study_name}_{str(self.i)}{path_augmentation(self.augmentation)}'
+            STUDY_NAME = f'{study_name}_{str(self.i)}'
 
             print(f'>>> ITERATION N. {self.i}')
             
