@@ -466,6 +466,12 @@ class Param_Search_Multimodal():
 def dd():
     return defaultdict(list)
 
+def path_augmentation(augmentation):
+    if augmentation:
+        return '_augmentation'
+    else:
+        return ''
+
 class Kfold_CV_Multimodal():
     """Performs k-folds cross-validation. At each iteration performs
     hyperparameter tuning, then train and test the model with the optimised
@@ -783,7 +789,7 @@ class Kfold_CV_Multimodal():
             # perform testing of the final model            
             self.model_testing(train_loader, test_loader, num_epochs,
                                test_model_path, device, cell_line, task,
-                               checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{path_augmentation(self.augmentation)}') 
+                               checkpoint_path= f'{cell_line}_{model.__name__}{path_augmentation(self.augmentation)}_{task}_{self.i}_test_') 
             #  checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test{path_augmentation(self.augmentation)}') 
 
         # compute average AUPRC of the CV

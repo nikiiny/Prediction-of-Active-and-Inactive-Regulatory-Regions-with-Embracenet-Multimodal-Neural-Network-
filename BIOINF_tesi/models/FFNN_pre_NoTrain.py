@@ -12,7 +12,7 @@ class FFNN_pre_NoTrain(nn.Module):
         self.device = device
         self.model = []
 
-        n_layers = model_params['n_layers']
+        n_layers = int(model_params['n_layers'])
         layers = []
 
         for i in range(n_layers):

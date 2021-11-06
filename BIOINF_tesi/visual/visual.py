@@ -12,6 +12,9 @@ from BIOINF_tesi.models import EmbraceNetMultimodal_NoTrain, ConcatNetMultimodal
 from BIOINF_tesi.data_pipe import Build_DataLoader_Pipeline
 from BIOINF_tesi.data_pipe.utils import process_sequence
 import warnings
+from scipy.sparse import coo_matrix
+import gc
+import re
 
 TASKS = ['active_E_vs_inactive_E', 'active_P_vs_inactive_P', 
                         'active_E_vs_active_P', 'inactive_E_vs_inactive_P',
@@ -206,7 +209,11 @@ def get_average_AUPRC_df(models=['FFNN','CNN','EmbraceNetMultimodal','ConcatNetM
     return models_df_dict
 
 
-class Compare_Models_Result():
+def dd():
+    return defaultdict(dict)
+
+
+class Compare_Models_Result_():
     
     def __init__(self):
         self.models_dict = {'EmbraceNetMultimodal': EmbraceNetMultimodal_NoTrain,
@@ -214,12 +221,46 @@ class Compare_Models_Result():
                   'ConcatNetMultimodal': ConcatNetMultimodal_NoTrain,
                   'FFNN': FFNN_NoTrain,
                   'CNN': CNN_NoTrain}
-        self.prediction_dict = defaultdict(lambda: defaultdict(dict))
-        self.pval_dict = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+
+        self.pval_dict = defaultdict(dd)
 
         warnings.filterwarnings("ignore")
     
     
+    def get_model_predictions(self, cell_line, task, model, device):
+
+        model_ = self.models_dict[model]
+        if model == 'CNN':
+            model_ = model_(cell_line, task, device)
+        else:
+            if model.endswith('augmentation'):
+                model_ = model_(cell_line, task, self.X_1.loc[0].shape[1], device=device, augmentation=True)
+            else:
+                model_ = model_(cell_line, task, self.X_1.loc[0].shape[1], device=device)
+
+        state_dict = torch.load(f'models/{cell_line}_{task}_{model}_TEST.pt', map_location=device)
+                    
+        model_.load_state_dict(state_dict['model_state_dict'])
+        model_.double().to(device)
+
+        for p in model_.parameters():
+            p.require_grads = False
+
+        model_.eval()
+
+        with torch.no_grad():
+            if model.startswith(UNIMODAL_NETWORKS_NOSEQ):
+                output = torch.tensor([ model_( self.X_1.loc[i] )[1] for i in range(self.X_1.shape[0]) ])
+            elif model.startswith(UNIMODAL_NETWORKS_SEQ):
+                output = torch.tensor([ model_( self.X_2.loc[i] )[1] for i in range(self.X_2.shape[0]) ])
+            elif model.startswith(MULTIMODAL_NETWORKS):
+                output = torch.tensor([ model_(
+                                            [self.X_1.loc[i],
+                                             self.X_2.loc[i]]
+                                    )[1] for i in range(self.X_1.shape[0]) ])
+        return output
+
+
     def __call__(self, device, base_model='EmbraceNetMultimodal', 
                  comparison_models=['FFNN','CNN','ConcatNetMultimodal'],
                  augmentation_base_model=True):
@@ -229,60 +270,229 @@ class Compare_Models_Result():
         if isinstance(comparison_models, str):
             comparison_models = [comparison_models]
 
+        MODELS = comparison_models + base_model
+        if augmentation_base_model:
+            MODELS += [f'{base_model[0]}_augmentation']
+            base_model += [f'{base_model[0]}_augmentation']
+
         for task in tqdm(TASKS, desc='Iter tasks'):
             pipe_data_load = Build_DataLoader_Pipeline(path_name=f'{task}.pickle')
             data_class = pipe_data_load.data_class
 
             for cell_line in tqdm(CELL_LINES, desc='Iter cell lines'):
-                _, X_1, _ = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=False)
-                _, X_2, _ = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=True)
 
-                X_1 = X_1.apply(lambda x: torch.reshape(torch.tensor(x), (1,-1)), axis=1)
-                X_2 = X_2.apply(lambda x: torch.reshape(torch.tensor(process_sequence(x)), (1,4,256)) )
+                self.pval_dict[task][cell_line]= defaultdict(dd)
+                _, self.X_1, _ = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=False)
+                _, self.X_2, _ = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=True)
 
-                MODELS = comparison_models + base_model
-                if augmentation_base_model:
-                    MODELS += [f'{base_model[0]}_augmentation']
-                    base_model += [f'{base_model[0]}_augmentation']
+                self.X_1 =  self.X_1.apply(lambda x: torch.reshape(torch.tensor(x), (1,-1)), axis=1) 
+                self.X_2 =  self.X_2.apply(lambda x: torch.reshape(torch.tensor(process_sequence(x)), (1,4,256)) ) 
 
-                for model in tqdm(MODELS, desc='Iter models'):
-                    model_ = self.models_dict[model]
-                    if model == 'CNN':
-                        model_ = model_(cell_line, task, device)
-                    else:
-                        if model.endswith('augmentation'):
-                            model_ = model_(cell_line, task, X_1.loc[0].shape[1], device=device, augmentation=augmentation_base_model)
+                for b_model in tqdm(base_model, desc='Iter models'):
+                    print(b_model)
+
+                    base_pred = self.get_model_predictions(cell_line, task, b_model, device)
+                    for c_model in tqdm(comparison_models + base_model):
+                        print(c_model)
+                        if c_model == b_model:
+                            continue
                         else:
-                            model_ = model_(cell_line, task, X_1.loc[0].shape[1], device=device)
+                            c_pred = self.get_model_predictions(cell_line, task, c_model, device)
+                        pval = wilcoxon (base_pred, c_pred)
 
-                    state_dict = torch.load(f'models/{cell_line}_{task}_{model}_TEST.pt', map_location=device)
-                    
-                    model_.load_state_dict(state_dict['model_state_dict'])
-                    model_.double().to(device)
+                        del c_pred
 
-                    for p in model_.parameters():
-                        p.require_grads = False
-
-                    if model.startswith(UNIMODAL_NETWORKS_NOSEQ):
-                        output = torch.tensor([ model_( X_1.loc[i] )[1] for i in range(len(X_1)) ])
-                    elif model.startswith(UNIMODAL_NETWORKS_SEQ):
-                        output = torch.tensor([ model_( X_2.loc[i] )[1] for i in range(len(X_2)) ])
-                    elif model.startswith(MULTIMODAL_NETWORKS):
-                        output = torch.tensor([ model_(
-                                                    [X_1.loc[i],
-                                                     X_2.loc[i]]
-                                            )[1] for i in range(len(X_1)) ])
-
-                    output = output.detach().numpy()
-                    self.prediction_dict[task][cell_line][model] = output
-                    
-                    
-                for b_model in base_model:
-                    for c_model in comparison_models:
-                        pval = wilcoxon( self.prediction_dict[task][cell_line][b_model],
-                                        self.prediction_dict[task][cell_line][c_model] )[1]
                         self.pval_dict[task][cell_line][b_model][c_model] = pval
-                        
-                        
+                    del base_pred
+
+                del self.X_1
+                del self.X_2 
+
+                with open ('pval_results_dict.pickle', 'wb') as fout:
+                    pickle.dump(OrderedDict(self.pval_dict), fout)
+
+
+            del pipe_data_load 
+            gc.collect()
+
         return self.pval_dict
+
+
+class Compare_Models_Result():
     
+    def __init__(self):
+        self.models_dict = {'EmbraceNetMultimodal': EmbraceNetMultimodal_NoTrain,
+                   'EmbraceNetMultimodal_augmentation': EmbraceNetMultimodal_NoTrain,
+                  'ConcatNetMultimodal': ConcatNetMultimodal_NoTrain,
+                  'FFNN': FFNN_NoTrain,
+                  'CNN': CNN_NoTrain}
+        self.pval_dict = defaultdict(dd)
+
+        warnings.filterwarnings("ignore")
+    
+    
+    def get_model_predictions(self, cell_line, task, model, n_iteration):
+
+        model_ = self.models_dict[model]
+        if model == 'CNN':
+            model_ = model_(cell_line, task, n_iteration, device)
+        else:
+            if model.endswith('augmentation'):
+                model_ = model_(cell_line, task, n_iteration, self.X_1.loc[0].shape[1], device=device, augmentation=True)
+            else:
+                model_ = model_(cell_line, task, n_iteration, self.X_1.loc[0].shape[1], device=device)
+
+        state_dict = torch.load(f'{cell_line}_{model}_{task}_{n_iteration}_test_.pt', map_location=device)
+                    
+        model_.load_state_dict(state_dict['model_state_dict'])
+        model_.double().to(device)
+
+        for p in model_.parameters():
+            p.require_grads = False
+
+        model_.eval()
+
+        with torch.no_grad():
+            if model.startswith(UNIMODAL_NETWORKS_NOSEQ):
+                output = torch.tensor([ model_( self.X_1.loc[i] )[1] for i in range(self.X_1.shape[0]) ])
+            elif model.startswith(UNIMODAL_NETWORKS_SEQ):
+                output = torch.tensor([ model_( self.X_2.loc[i] )[1] for i in range(self.X_2.shape[0]) ])
+            elif model.startswith(MULTIMODAL_NETWORKS):
+                output = torch.tensor([ model_(
+                                            [self.X_1.loc[i],
+                                             self.X_2.loc[i]]
+                                    )[1] for i in range(self.X_1.shape[0]) ])
+
+        return output
+
+
+    def get_model_difference(self):
+
+        for task in self.pval_dict.keys():
+            for cell_line in self.pval_dict[task].keys():
+                for b_model in self.pval_dict[task][cell_line].keys():
+                    for c_model in self.pval_dict[task][cell_line][b_model].keys():
+                        counter = 0
+
+                        for fold in self.pval_dict[task][cell_line][b_model][c_model].keys():
+                            if self.pval_dict[task][cell_line][b_model][c_model][fold] >=0.05:
+                                self.pval_dict[task][cell_line][b_model][c_model][fold]['different']=False
+                            else:
+                                self.pval_dict[task][cell_line][b_model][c_model][fold]['different']=True
+                                counter +=1
+
+                        if counter >=2:
+                            self.pval_dict[task][cell_line][b_model][c_model]['different']=True
+
+
+
+    def __call__(self, device, base_model='EmbraceNetMultimodal', 
+                 comparison_models=['FFNN','CNN','ConcatNetMultimodal'],
+                 augmentation_base_model=True, n_folds=3, cell_lines=CELL_LINES, tasks=TASKS,
+                 pval_dict=None):
+
+        if pval_dict:
+            self.pval_dict = pval_dict
+
+        else:
+            if isinstance(base_model, str):
+                base_model = [base_model]
+            if isinstance(comparison_models, str):
+                comparison_models = [comparison_models]
+
+            MODELS = comparison_models + base_model
+            if augmentation_base_model:
+                MODELS += [f'{base_model[0]}_augmentation']
+                base_model += [f'{base_model[0]}_augmentation']
+
+            for task in tqdm(tasks, desc='Iter tasks'):
+                pipe_data_load = Build_DataLoader_Pipeline(path_name=f'{task}.pickle')
+                data_class = pipe_data_load.data_class
+
+                for cell_line in tqdm(cell_lines, desc='Iter cell lines'):
+                    _, self.X_1, _ = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=False)
+                    _, self.X_2, _ = data_class.return_index_data_for_cv(cell_line=cell_line, sequence=True)
+
+                    self.X_1 = self.X_1.apply(lambda x: torch.reshape(torch.tensor(x), (1,-1)), axis=1) 
+                    self.X_2 = self.X_2.apply(lambda x: torch.reshape(torch.tensor(process_sequence(x)), (1,4,256)) )
+
+                    for i in tqdm(range(n_folds), desc='Iter folds'):
+                        i+=1
+                        for b_model in tqdm(base_model, desc='iter models'):
+                            self.pval_dict[task][cell_line][b_model] = defaultdict(dd)
+
+                            base_pred = self.get_model_predictions(cell_line, task, b_model, i, device)
+                            for c_model in comparison_models:
+                                if c_model == b_model:
+                                    continue
+                                else:
+                                    c_pred = self.get_model_predictions(cell_line, task, c_model, i, device)
+                                pval = wilcoxon (base_pred, c_pred)[1]
+
+                                del c_pred
+                                self.pval_dict[task][cell_line][b_model][c_model][i] = pval
+
+                            del base_pred
+
+                    del self.X_1
+                    del self.X_2 
+                
+                    with open ('pval_results_dict.pickle', 'wb') as fout:
+                        pickle.dump(OrderedDict(self.pval_dict), fout)
+
+                del pipe_data_load 
+                #gc.collect()
+
+        self.get_model_difference()
+
+        return self.pval_dict
+
+
+
+def parse_as_dict(X):
+    X = re.split(': |\n',X)
+    keys=[]
+    vals=[]
+    for i,x in enumerate(X):
+        if i%2==0:
+            keys.append(x.lstrip())
+        else:
+            try:
+                vals.append(float(x))
+            except:
+                vals.append(x)
+                
+    d=defaultdict(float)
+    
+    for k,v in zip(keys,vals):
+        d[k]=v
+        
+    return OrderedDict(d)
+
+
+
+def parse_output_for_params_dict(output, cell_line, task, model, device, verbose=False, augmentation=False):
+
+    params = []
+    for match in re.finditer('Params:\s+', output):
+        start = match.end()
+        end = re.search('\n\n',output[start:]).start() + start
+        params.append(output[start:end])
+
+    for n in range(3):
+        i=n+1
+        if augmentation:
+            NN_dict = torch.load(f'{cell_line}_{model.__name__}_augmentation_{task}_{i}_test_.pt', map_location=torch.device(device))
+        else:
+            NN_dict = torch.load(f'{cell_line}_{model.__name__}_{task}_{i}_test_.pt', map_location=torch.device(device))
+
+        NN_dict['model_params']=parse_as_dict(params[n])
+        if verbose:
+            print(i)
+            display(NN_dict['model_params'])
+        
+        if augmentation:
+            torch.save(NN_dict, f'{cell_line}_{model.__name__}_augmentation_{task}_{i}_test_.pt')
+        else:
+            torch.save(NN_dict, f'{cell_line}_{model.__name__}_{task}_{i}_test_.pt')
+

@@ -95,7 +95,6 @@ class EmbraceNetMultimodal_NoTrain(nn.Module):
     def __init__(self, 
                  cell_line,
                  task,
-                 n_iter,
                  in_features_FFNN,
                  device,
                  augmentation=False,
@@ -108,7 +107,6 @@ class EmbraceNetMultimodal_NoTrain(nn.Module):
         # input parameters
         self.cell_line=cell_line
         self.task = task
-        self.n_iter = n_iter 
         self.device = device
         self.n_classes = n_classes
         self.embracenet_dropout=embracenet_dropout
@@ -116,9 +114,9 @@ class EmbraceNetMultimodal_NoTrain(nn.Module):
         self.args = args
 
         if augmentation:
-            torch_saved_state = torch.load(f'{self.cell_line}_EmbraceNetMultimodal_augmentation_{self.task}_{n_iter}_test_.pt', map_location=torch.device(device))
+            torch_saved_state = torch.load(f'models/{cell_line}_{task}_EmbraceNetMultimodal_augmentation_TEST.pt', map_location=torch.device(device))
         else:
-            torch_saved_state = torch.load(f'{self.cell_line}_EmbraceNetMultimodal_{self.task}_{n_iter}_test_.pt', map_location=torch.device(device))
+            torch_saved_state = torch.load(f'models/{cell_line}_{task}_EmbraceNetMultimodal_TEST.pt', map_location=torch.device(device))
         
         single_model_params = get_single_model_params(torch_saved_state['model_params'])
         # 1) pre neural networks
@@ -137,14 +135,14 @@ class EmbraceNetMultimodal_NoTrain(nn.Module):
         for param in self.CNN.parameters():
             param.requires_grad = False
         
-        last_layer_FFNN =  single_model_params['FFNN']['n_layers']-1 
-        self.FFNN_pre_output_size =  single_model_params['FFNN'][f'n_units_l{last_layer_FFNN}'] 
+        last_layer_FFNN = single_model_params['FFNN']['n_layers']-1
+        self.FFNN_pre_output_size = single_model_params['FFNN'][f'n_units_l{last_layer_FFNN}']
         
-        self.CNN_pre_output_size = output_size_from_model_params(single_model_params['CNN']) 
+        self.CNN_pre_output_size = output_size_from_model_params(single_model_params['CNN'])
 
         
         # 2) embracenet
-        embracement_size =  torch_saved_state['model_params']['EMBRACENET_embracement_size'] 
+        embracement_size = torch_saved_state['model_params']['EMBRACENET_embracement_size']
         
         self.embracenet = EmbraceNet(device=self.device, 
                                      input_size_list=[self.FFNN_pre_output_size, self.CNN_pre_output_size], 
@@ -156,11 +154,11 @@ class EmbraceNetMultimodal_NoTrain(nn.Module):
         # 3) post embracement layers
         model_params = torch_saved_state['model_params']
 
-        n_post_layers =  model_params['n_post_layers'] 
+        n_post_layers = model_params['n_post_layers']
         post_layers = []
 
         for i in range(n_post_layers):
-            out_features =  model_params[f'EMBRACENET_n_units_l{i}'] 
+            out_features = model_params[f'EMBRACENET_n_units_l{i}']
             
             post_layers.append(nn.Linear(in_features, out_features))
             post_layers.append(nn.ReLU())

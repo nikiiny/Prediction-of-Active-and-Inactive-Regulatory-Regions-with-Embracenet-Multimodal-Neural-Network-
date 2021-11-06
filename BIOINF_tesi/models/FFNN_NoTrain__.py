@@ -10,20 +10,18 @@ class FFNN_NoTrain(nn.Module):
     def __init__(self, 
                 cell_line,
                 task,
-                n_iter,
                 in_features, 
                 device, 
                 classes=2):
         super(FFNN_NoTrain, self).__init__()
         self.cell_line = cell_line
         self.task = task
-        self.n_iter = n_iter
         self.device = device
         self.classes = classes
         self.model = []
         self.softmax_layer = torch.nn.Softmax(dim=None)
 
-        torch_saved_state = torch.load(f'{self.cell_line}_FFNN_{self.task}_{n_iter}_test_.pt', 
+        torch_saved_state = torch.load(f'models/{cell_line}_{task}_FFNN_TEST.pt', 
             map_location=torch.device(device))
 
         model_params = torch_saved_state['model_params']

@@ -299,6 +299,64 @@ def select_augmented_models(results_dict, verbose=False, model_name='FFNN', augm
 
 
 
+def select_augmented_models(results_dict, verbose=False, model_name='FFNN', augm_1='smote', augm_2='double', n_folds=3):
+    """Selects the best augmented models by comparing their scores through the wilcoxon test. If the difference
+    is not significant, keeps by default augm_1.
+    Saves the best performing model in the results_dict object and copies and saves the best model.
+
+    Parameters:
+    ------------------
+        results_dict (dict): dictionary containing scores of the models. 
+        verbose (bool): whether to print or not info about the statistical test.
+            Default: False
+        model_name (str): name of the model.
+            Default: 'FFNN'
+        augm_1 (str): type of augmentation n.1
+            Default: 'double'
+        augm_2 (str): type of augmentation n.2
+            Default: 'smote'
+    """
+
+    for cell in results_dict.keys():
+        for task in results_dict[cell].keys():
+            if set({f'{model_name}_{augm_1}',f'{model_name}_{augm_2}'}).issubset({*results_dict[cell][task].keys()}):
+                pval = ranksums(results_dict[cell][task][f'{model_name}_{augm_1}']['final_test_AUPRC_scores'], results_dict[cell][task][f'{model_name}_{augm_2}']['final_test_AUPRC_scores'])[1]
+                if verbose:
+                    print(f'\n{cell}')
+                    print(task)
+                    print(f'pvalue: {pval}')
+
+                if pval<0.3 and results_dict[cell][task][f'{model_name}_{augm_2}']['average_CV_AUPRC'] >= results_dict[cell][task][f'{model_name}_{augm_1}']['average_CV_AUPRC']:
+                        results_dict[cell][task][model_name] = results_dict[cell][task][f'{model_name}_{augm_2}'].copy()
+                        results_dict[cell][task]['best_augmentation']=augm_2
+                        #shutil.copy(f'models/{cell}_{task}_{model_name}_{augm_2}_TEST.pt', 
+                         #             f'models/{cell}_{task}_{model_name}_TEST.pt')
+                        for i in range(n_folds):
+                            i+=1
+                            shutil.copy(f'{cell}_{model_name}_{task}_{i}_test_{augm_2}.pt', 
+                                      f'{cell}_{model_name}_{task}_{i}_test_.pt')
+                        if verbose:
+                            print(f'Best augmentation method: {augm_2}')
+
+                else:
+                    results_dict[cell][task][model_name] = results_dict[cell][task][f'{model_name}_{augm_1}'].copy()
+                    results_dict[cell][task]['best_augmentation']=augm_2 #SISTEMA IN CV
+                    #shutil.copy(f'models/{cell}_{task}_{model_name}_{augm_1}_TEST.pt', 
+                     #                     f'models/{cell}_{task}_{model_name}_TEST.pt')
+                    for i in range(n_folds):
+                        i+=1
+                        shutil.copy(f'{cell}_{model_name}_{task}_{i}_test_{augm_1}.pt', 
+                                      f'{cell}_{model_name}_{task}_{i}_test_.pt')
+                    if verbose:
+                        print(f'Best augmentation method: {augm_1}')
+
+    return results_dict
+
+
+
+
+
+
 def get_single_model_params(model_params, models=['CNN','FFNN']):
     """
     model_params: model_params dictionary containing the values of the hyperparameters

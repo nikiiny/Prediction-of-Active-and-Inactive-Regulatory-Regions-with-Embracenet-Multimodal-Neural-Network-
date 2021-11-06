@@ -402,7 +402,8 @@ class Param_Search():
 def dd():
     return defaultdict(list)
 
-
+def augment_name_path(type_augm_genfeatures, y, rebalance_threshold, sequence):
+    return type_augm_genfeatures if get_imbalance(y) <= rebalance_threshold and not sequence else ''
 
 class Kfold_CV():
     """Performs k-folds cross-validation. At each iteration performs
@@ -683,7 +684,7 @@ class Kfold_CV():
 
             # perform testing of the final model            
             self.model_testing(train_loader, test_loader, num_epochs,
-                               test_model_path, device, checkpoint_path= f'{cell_line}_{model.__name__}_{task}_{self.i}_test_{self.type_augm_genfeatures if get_imbalance(y) <= self.rebalance_threshold and not self.sequence else None}')
+                               test_model_path, device, checkpoint_path= f'')
                 
         # compute average AUPRC of the CV
         avg_CV_AUPRC = np.round(sum(self.avg_score)/n_folds, 5)

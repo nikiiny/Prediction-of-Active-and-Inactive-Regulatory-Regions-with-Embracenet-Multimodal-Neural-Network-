@@ -12,7 +12,6 @@ class ConcatNetMultimodal_NoTrain(nn.Module):
     def __init__(self, 
                  cell_line,
                  task,
-                 n_iter,
                  in_features_FFNN,
                  device,
                  n_classes=2,  
@@ -23,13 +22,12 @@ class ConcatNetMultimodal_NoTrain(nn.Module):
         # input parameters
         self.cell_line=cell_line
         self.task = task
-        self.n_iter = n_iter
         self.device = device
         self.n_classes = n_classes
         self.softmax_layer = torch.nn.Softmax(dim=None)
         self.args = args
         
-        torch_saved_state = torch.load(f'{self.cell_line}_ConcatNetMultimodal_{self.task}_{n_iter}_test_.pt', 
+        torch_saved_state = torch.load(f'models/{cell_line}_{task}_ConcatNetMultimodal_TEST.pt', 
             map_location=torch.device(device))
 
         single_model_params = get_single_model_params(torch_saved_state['model_params'])
@@ -42,21 +40,21 @@ class ConcatNetMultimodal_NoTrain(nn.Module):
         for param in self.CNN.parameters():
             param.requires_grad = False
         
-        last_layer_FFNN =  single_model_params['FFNN']['n_layers']-1 
-        self.FFNN_pre_output_size =  single_model_params['FFNN'][f'n_units_l{last_layer_FFNN}'] 
+        last_layer_FFNN = single_model_params['FFNN']['n_layers']-1
+        self.FFNN_pre_output_size = single_model_params['FFNN'][f'n_units_l{last_layer_FFNN}']
         
-        self.CNN_pre_output_size = output_size_from_model_params(single_model_params['CNN']) 
+        self.CNN_pre_output_size = output_size_from_model_params(single_model_params['CNN'])
         
         # 2) concatenation layer + post layers
         model_params = torch_saved_state['model_params']
 
         in_features = self.FFNN_pre_output_size + self.CNN_pre_output_size
 
-        n_post_layers =  model_params["CONCATNET_n_post_layers"] 
+        n_post_layers = model_params["CONCATNET_n_post_layers"]
         post_layers = []
 
         for i in range(n_post_layers):
-            out_features =  model_params[f"CONCATNET_n_units_l{i}"] 
+            out_features = model_params[f"CONCATNET_n_units_l{i}"]
                 
             post_layers.append(nn.Linear(in_features, out_features))
             post_layers.append(nn.ReLU())
