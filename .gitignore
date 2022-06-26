@@ -8,6 +8,8 @@
 *.ipynb_checkpoints
 *.pyc
 *.pyo
+*models
+*__pycache__
 !results_dict.pickle
 !BIOINF_optuna_tuning.db
 
